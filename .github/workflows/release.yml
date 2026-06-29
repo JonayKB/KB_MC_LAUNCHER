@@ -1,0 +1,155 @@
+name: Release
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'KB-slot-engine/**'
+jobs:
+  # ── Job 1: leer versión y crear tag ──
+  create-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tagger.outputs.tag }}
+      should_release: ${{ steps.tagger.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version and create tag
+        id: tagger
+        run: |
+          VERSION=$(node -p "require('./KB-slot-engine/src-tauri/tauri.conf.json').version")
+          TAG="v$VERSION"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          if git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "Tag $TAG ya existe. No se genera nueva release."
+          else
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "Tag $TAG creado correctamente."
+          fi
+
+  # ── Job 2: build para cada plataforma ──
+  build:
+    needs: create-tag
+    if: needs.create-tag.outputs.should_release == 'true'
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            args: '--bundles deb,appimage'
+            runner: [self-hosted, Linux, X64]
+          - platform: windows
+            args: '--bundles nsis,msi'
+            runner: [self-hosted, Windows, X64]
+
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: ${{ matrix.platform == 'windows' && 'pwsh' || 'bash' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust (Linux)
+        if: matrix.platform == 'linux'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+            Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+            .\rustup-init.exe -y --default-toolchain stable --profile minimal
+            Remove-Item rustup-init.exe
+          } else {
+            rustup update stable
+            rustup default stable
+          }
+          echo "$env:USERPROFILE\.cargo\bin" >> $env:GITHUB_PATH
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libfuse2 \
+            file \
+            wget
+
+      - name: Cache Rust (Linux)
+        if: matrix.platform == 'linux'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            KB-slot-engine/src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Cache Rust (Windows)
+        if: matrix.platform == 'windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.USERPROFILE }}\.cargo\bin\
+            ${{ env.USERPROFILE }}\.cargo\registry\index\
+            ${{ env.USERPROFILE }}\.cargo\registry\cache\
+            ${{ env.USERPROFILE }}\.cargo\git\db\
+            KB-slot-engine\src-tauri\target\
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Configure Rust parallelism (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          echo "CARGO_BUILD_JOBS=$(nproc)" >> $GITHUB_ENV
+          echo "RUSTFLAGS=-C codegen-units=16" >> $GITHUB_ENV
+
+      - name: Configure Rust parallelism (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $cores = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
+          echo "CARGO_BUILD_JOBS=$cores" >> $env:GITHUB_ENV
+          echo "RUSTFLAGS=-C codegen-units=16" >> $env:GITHUB_ENV
+
+      - name: Install frontend deps
+        working-directory: KB-slot-engine
+        run: npm install
+
+      - name: Build and Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: KB-slot-engine
+          tagName: ${{ needs.create-tag.outputs.tag }}
+          releaseName: 'KB Slot Engine ${{ needs.create-tag.outputs.tag }}'
+          releaseBody: 'Nueva versión'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
