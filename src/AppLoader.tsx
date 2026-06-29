@@ -1,18 +1,33 @@
 import { useCallback, useState } from 'react';
+import { UserProvider, useUser } from './context/UserContext';
 import UpdateChecker from './screens/UpdateCheckerScreen';
-import './App.css';
 import ModpackLauncher from './screens/ModpackLauncher';
+import './App.css';
+import SetupScreen from './screens/SetupScreen';
 
-type AppStep = 'update' | 'launcher';
+type AppStep = 'update' | 'setup' | 'launcher';
 
-export default function AppLoader() {
+function AppContent() {
+    const { isSetupDone } = useUser();
     const [step, setStep] = useState<AppStep>('update');
-    const handleUpdateComplete = useCallback(() => setStep('launcher'), []);
+
+    const handleUpdateComplete = useCallback(() => {
+        setStep(isSetupDone ? 'launcher' : 'setup');
+    }, [isSetupDone]);
 
     return (
         <div className="app">
             {step === 'update' && <UpdateChecker onComplete={handleUpdateComplete} />}
+            {step === 'setup' && <SetupScreen onComplete={() => setStep('launcher')} />}
             {step === 'launcher' && <ModpackLauncher />}
         </div>
+    );
+}
+
+export default function AppLoader() {
+    return (
+        <UserProvider>
+            <AppContent />
+        </UserProvider>
     );
 }

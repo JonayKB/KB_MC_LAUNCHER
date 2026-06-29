@@ -2,9 +2,6 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 
-mod minecraft;
-use minecraft::commands::{download_mod_file, extract_overrides};
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -58,18 +55,14 @@ pub fn run() {
 
             Ok(())
         })
-        .plugin(lighty_launcher::tauri::lighty_plugin()) // ← DESPUÉS del setup
+        .plugin(lighty_launcher::tauri::lighty_plugin())
         .plugin(
-            tauri_plugin_log::Builder::new() /* ... */
+            tauri_plugin_log::Builder::new()
                 .build(),
         )
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![
-            download_mod_file,
-            extract_overrides
-        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

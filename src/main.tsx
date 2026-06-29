@@ -1,9 +1,14 @@
-import React from "react";
 import ReactDOM from "react-dom/client";
 import AppLoader from "./AppLoader";
+import './styles/theme.css';
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <AppLoader />
-  </React.StrictMode>,
+import { ThemeProvider } from './context/ThemeContext';
+import { UserProvider } from './context/UserContext';
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <ThemeProvider>
+    <UserProvider>
+      <AppLoader />
+    </UserProvider>
+  </ThemeProvider>
 );
