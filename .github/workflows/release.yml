@@ -102,7 +102,7 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            KB-slot-engine/src-tauri/target/
+            ./src-tauri/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
@@ -144,9 +144,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          projectPath: KB-slot-engine
           tagName: ${{ needs.create-tag.outputs.tag }}
-          releaseName: 'KB Slot Engine ${{ needs.create-tag.outputs.tag }}'
+          releaseName: 'KB MC LAUNCHER ${{ needs.create-tag.outputs.tag }}'
           releaseBody: 'Nueva versión'
           releaseDraft: true
           prerelease: false
