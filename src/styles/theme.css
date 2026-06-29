@@ -92,3 +92,8 @@ body {
     background: var(--border-strong);
     border-radius: 3px;
 }
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 1; }
+}

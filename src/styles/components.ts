@@ -61,8 +61,8 @@ export const logo = {
     fontWeight: 700,
     letterSpacing: '0.15em',
   } as S,
-  kb:   { color: 'var(--accent)' } as S,
-  dot:  { color: 'var(--text-faint)' } as S,
+  kb: { color: 'var(--accent)' } as S,
+  dot: { color: 'var(--text-faint)' } as S,
   text: { color: 'var(--text-faint)' } as S,
 } as const;
 
@@ -187,7 +187,9 @@ export const progress = {
 export const box = {
   status: {
     backgroundColor: 'var(--bg-elevated)',
-    border: '1px solid var(--border)',
+    borderTop: '1px solid var(--border)',
+    borderRight: '1px solid var(--border)',
+    borderBottom: '1px solid var(--border)',
     borderLeft: '3px solid var(--accent)',
     borderRadius: '0 var(--radius-lg) var(--radius-lg) 0',
     padding: '14px 16px',
@@ -198,7 +200,9 @@ export const box = {
 
   error: {
     backgroundColor: 'var(--accent-dim)',
-    border: '1px solid var(--accent-border)',
+    borderTop: '1px solid var(--accent-border)',
+    borderRight: '1px solid var(--accent-border)',
+    borderBottom: '1px solid var(--accent-border)',
     borderLeft: '3px solid var(--accent)',
     borderRadius: '0 var(--radius-lg) var(--radius-lg) 0',
     padding: '14px 16px',
@@ -206,7 +210,9 @@ export const box = {
 
   info: {
     backgroundColor: 'var(--bg-elevated)',
-    border: '1px solid var(--border)',
+    borderTop: '1px solid var(--border)',
+    borderRight: '1px solid var(--border)',
+    borderBottom: '1px solid var(--border)',
     borderLeft: '3px solid var(--text-faint)',
     borderRadius: '0 var(--radius-lg) var(--radius-lg) 0',
     padding: '14px 16px',

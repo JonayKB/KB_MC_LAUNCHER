@@ -1,17 +1,15 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { open } from '@tauri-apps/plugin-dialog';
-import { readFile } from '@tauri-apps/plugin-fs';
-import JSZip from 'jszip';
-import { layout, logo, header, badge, progress as pg, box, text, btn, spinner, dropZone as dz } from '../styles/components';
+import { layout, logo, header, badge, progress as pg, box, text, btn, spinner } from '../styles/components';
+import { fetchModpackVersion } from '../repositories/ModpackRepository';
+import type { InstalledModpack, ModpackVersion } from '../types/modpack';
+import { useUser } from '../context/UserContext';
 
-
-interface Manifest {
-    name: string;
-    version: string;
-    minecraft: { version: string; modLoaders: { id: string; primary: boolean }[] };
-    files: { projectID: number; fileID: number; required: boolean }[];
+interface Props {
+    installed: InstalledModpack;
+    onUninstall: () => void;
+    onChangeModpack: () => void;
 }
 
 interface Progress {
@@ -21,115 +19,52 @@ interface Progress {
     message: string;
 }
 
-const CF_API_KEY = import.meta.env.VITE_CURSEFORGE_API_KEY as string;
+type LauncherState = 'checking' | 'ready' | 'update-available' | 'updating' | 'repairing' | 'launching' | 'error';
 
-function getLoader(manifest: Manifest) {
-    const primary = manifest.minecraft.modLoaders.find(l => l.primary)!;
-    const [type, version] = primary.id.split('-');
-    return { id: primary.id, type, version };
-}
+const phaseLabel: Record<string, string> = {
+    forge: 'Instalando Forge',
+    mods: 'Copiando mods',
+    overrides: 'Aplicando overrides',
+    core: 'Descargando assets',
+    java: 'Instalando Java',
+    loader: 'Instalando loader',
+};
 
-export default function ModpackLauncher() {
-    const [manifest, setManifest] = useState<Manifest | null>(null);
+export default function ModpackLauncher({ installed, onUninstall, onChangeModpack }: Readonly<Props>) {
+    const { hasMinecraftOwned, username } = useUser();
+
+    const [state, setState] = useState<LauncherState>('checking');
+    const [latestVersion, setLatestVersion] = useState<ModpackVersion | null>(null);
     const [progress, setProgress] = useState<Progress | null>(null);
-    const [installed, setInstalled] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [dragging, setDragging] = useState(false);
-    const [offlineHovered, setOfflineHovered] = useState(false);
-    const [msHovered, setMsHovered] = useState(false);
+
+    const [playOfflineHovered, setPlayOfflineHovered] = useState(false);
+    const [playMsHovered, setPlayMsHovered] = useState(false);
+    const [updateHovered, setUpdateHovered] = useState(false);
+    const [repairHovered, setRepairHovered] = useState(false);
+    const [uninstallHovered, setUninstallHovered] = useState(false);
+    const [changeHovered, setChangeHovered] = useState(false);
+    const [confirmUninstall, setConfirmUninstall] = useState(false);
+
     const initDone = useRef(false);
-    const handleZipPath = useCallback(async (filePath: string) => {
-        setError(null);
-        console.log('[handleZipPath] Iniciando con:', filePath);
 
-        const bytes = await readFile(filePath);
-        console.log('[handleZipPath] Archivo leído, bytes:', bytes.length);
-
-        const zip = await JSZip.loadAsync(bytes);
-        console.log('[handleZipPath] ZIP parseado');
-
-        const mf: Manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
-        console.log('[handleZipPath] Manifest:', mf.name, mf.version, mf.minecraft.version);
-        setManifest(mf);
-
-        const loader = getLoader(mf);
-        console.log('[handleZipPath] Loader detectado:', loader);
-
-        try {
-            // 1. Descargar mods
-            const requiredFiles = mf.files.filter(f => f.required);
-            console.log('[handleZipPath] Mods requeridos:', requiredFiles.length);
-
-            for (let i = 0; i < requiredFiles.length; i += 50) {
-                const batch = requiredFiles.slice(i, i + 50);
-                console.log(`[CurseForge] Batch ${i / 50 + 1}: solicitando ${batch.length} fileIDs`);
-
-                const res = await fetch('https://api.curseforge.com/v1/mods/files', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'x-api-key': CF_API_KEY, 'User-Agent': 'KBLauncher/0.1.0 (jonaykb@gmail.com)' },
-                    body: JSON.stringify({ fileIds: batch.map(f => f.fileID) }),
-                });
-                console.log('[CurseForge] Response status:', res.status);
-                if (!res.ok) throw new Error(`CurseForge API error: ${res.status}`);
-
-                const { data } = await res.json();
-                console.log('[CurseForge] Mods recibidos en batch:', data.length);
-
-                for (const [j, modFile] of (data as any[]).entries()) {
-                    const url: string = modFile.downloadUrl
-                        ?? `https://mediafilez.forgecdn.net/files/${Math.floor(modFile.id / 1000)}/${modFile.id % 1000}/${modFile.fileName}`;
-                    console.log(`[mod ${i + j + 1}/${requiredFiles.length}] ${modFile.fileName} → ${url}`);
-
-                    setProgress({ phase: 'mods', current: i + j + 1, total: requiredFiles.length, message: modFile.fileName });
-
-                    await invoke('download_mod_file', { url, fileName: modFile.fileName, instanceName: mf.name });
-                    console.log(`[mod ${i + j + 1}] descargado OK`);
-                }
+    // Listener eventos lighty
+    useEffect(() => {
+        const unlisten = listen<{ eventType: string; data: any }>('lighty-event', (e) => {
+            const { eventType, data } = e.payload;
+            if (['core', 'java', 'loader'].includes(eventType)) {
+                setProgress(prev => ({
+                    phase: eventType,
+                    current: data?.current ?? prev?.current ?? 0,
+                    total: data?.total ?? prev?.total ?? 1,
+                    message: data?.type ?? prev?.message ?? '',
+                }));
             }
-
-            // 2. Extraer overrides
-            console.log('[handleZipPath] Extrayendo overrides...');
-            setProgress({ phase: 'overrides', current: 0, total: 1, message: 'Copiando configs...' });
-            await invoke('extract_overrides', {
-                zipBytes: Array.from(bytes),
-                instanceName: mf.name,
-            });
-            console.log('[handleZipPath] Overrides extraídos OK');
-
-            // 3. Launch (instala loader + lanza)
-            console.log('[handleZipPath] Invocando launch con versionConfig:', {
-                name: `${mf.name}-${loader.type}`,
-                loader: loader.type,
-                loaderVersion: loader.version,
-                minecraftVersion: mf.minecraft.version,
-            });
-            setProgress({ phase: 'loader', current: 0, total: 1, message: `Instalando ${loader.id} y lanzando...` });
-
-            const result = await invoke('launch', {
-                versionConfig: {
-                    name: `${mf.name}-${loader.type}`,
-                    loader: loader.type,
-                    loaderVersion: loader.version,
-                    minecraftVersion: mf.minecraft.version,
-                },
-                launchConfig: {
-                    username: 'KBPlayer',
-                    uuid: '00000000-0000-0000-0000-000000000000',
-                    javaDistribution: 'temurin',
-                },
-            });
-            console.log('[handleZipPath] launch result:', result);
-
-            setInstalled(true);
-            setProgress(null);
-        } catch (err) {
-            console.error('[handleZipPath] ERROR:', err);
-            setError(String(err));
-            setProgress(null);
-        }
+        });
+        return () => { unlisten.then(fn => fn()); };
     }, []);
 
-
+    // Al montar: init lighty + comprobar versión
     useEffect(() => {
         if (initDone.current) return;
         initDone.current = true;
@@ -140,75 +75,98 @@ export default function ModpackLauncher() {
             application: 'KBLauncher',
         }).catch(console.error);
 
-        const unlistenLighty = listen<{ eventType: string; data: any }>('lighty-event', (e) => {
-            const { eventType, data } = e.payload;
-            if (eventType === 'core' || eventType === 'java' || eventType === 'loader') {
-                setProgress(prev => ({
-                    phase: eventType,
-                    current: data?.current ?? prev?.current ?? 0,
-                    total: data?.total ?? prev?.total ?? 1,
-                    message: data?.type ?? prev?.message ?? '',
-                }));
-            }
-        });
+        checkVersion();
+    }, []);
 
-        const unlistenDrop = listen<{ paths: string[] }>('tauri://drag-drop', (e) => {
-            const path = e.payload.paths[0];
-            if (path?.endsWith('.zip')) handleZipPath(path);
-        });
-
-        return () => {
-            unlistenLighty.then(fn => fn());
-            unlistenDrop.then(fn => fn());
-        };
-    }, [handleZipPath]);
-
-
-    async function launchOffline() {
-        if (!manifest) return;
-        const loader = getLoader(manifest);
-        console.log('[launchOffline] manifest:', manifest.name, 'loader:', loader);
+    async function checkVersion() {
+        setState('checking');
+        setError(null);
         try {
-            console.log('[launchOffline] invocando launch...');
-            const result = await invoke('launch', {
+            const latest = await fetchModpackVersion(installed.modpackId);
+            setLatestVersion(latest);
+            setState(latest.version === installed.version ? 'ready' : 'update-available');
+        } catch (err) {
+            console.error('[checkVersion]', err);
+            setError(String(err));
+            setState('error');
+        }
+    }
+
+    async function applyModsAndOverrides(version: ModpackVersion) {
+        await invoke('download_and_extract_zip', {
+            url: version.modsUrl,
+            instanceName: installed.modpackId,
+            targetFolder: 'mods',
+            mode: 'replace',
+        });
+        setProgress({ phase: 'overrides', current: 0, total: 1, message: 'Aplicando overrides...' });
+        await invoke('download_and_extract_zip', {
+            url: version.overridesUrl,
+            instanceName: installed.modpackId,
+            targetFolder: 'overrides',
+            mode: 'replace',
+        });
+    }
+
+    async function handleUpdate() {
+        if (!latestVersion) return;
+        setState('updating');
+        setError(null);
+        try {
+            setProgress({ phase: 'mods', current: 0, total: 1, message: 'Descargando mods...' });
+            await applyModsAndOverrides(latestVersion);
+            setProgress(null);
+            setState('ready');
+        } catch (err) {
+            console.error('[handleUpdate]', err);
+            setError(String(err));
+            setState('error');
+            setProgress(null);
+        }
+    }
+
+    async function handleRepair() {
+        if (!latestVersion) return;
+        setState('repairing');
+        setError(null);
+        try {
+            setProgress({ phase: 'forge', current: 0, total: 1, message: `Reinstalando Forge ${latestVersion.forgeVersion}...` });
+            await invoke('launch', {
                 versionConfig: {
-                    name: `${manifest.name}-${loader.type}`,
-                    loader: loader.type,
-                    loaderVersion: loader.version,
-                    minecraftVersion: manifest.minecraft.version,
+                    name: `${installed.modpackId}-forge`,
+                    loader: 'forge',
+                    loaderVersion: latestVersion.forgeVersion,
+                    minecraftVersion: latestVersion.minecraftVersion,
                 },
                 launchConfig: {
-                    username: 'KBPlayer',
+                    username: '_repair_',
                     uuid: '00000000-0000-0000-0000-000000000000',
                     javaDistribution: 'temurin',
                 },
             });
-            console.log('[launchOffline] result:', result);
+            setProgress({ phase: 'mods', current: 0, total: 1, message: 'Reemplazando mods...' });
+            await applyModsAndOverrides(latestVersion);
+            setProgress(null);
+            setState('ready');
         } catch (err) {
-            console.error('[launchOffline] ERROR:', err);
+            console.error('[handleRepair]', err);
             setError(String(err));
+            setState('error');
+            setProgress(null);
         }
     }
 
-    async function launchMicrosoft() {
-        if (!manifest) return;
-        const loader = getLoader(manifest);
-        console.log('[launchMicrosoft] manifest:', manifest.name, 'loader:', loader);
+    async function launchGame(profile: { username: string; uuid: string; accessToken?: string }) {
+        if (!latestVersion) return;
+        setState('launching');
+        setError(null);
         try {
-            console.log('[launchMicrosoft] autenticando con Microsoft...');
-            const profile = await invoke<{ username: string; uuid: string }>(
-                'authenticate_microsoft',
-                { clientId: import.meta.env.VITE_AZURE_CLIENT_ID }
-            );
-            console.log('[launchMicrosoft] profile:', profile);
-
-            console.log('[launchMicrosoft] invocando launch...');
-            const result = await invoke('launch', {
+            await invoke('launch', {
                 versionConfig: {
-                    name: `${manifest.name}-${loader.type}`,
-                    loader: loader.type,
-                    loaderVersion: loader.version,
-                    minecraftVersion: manifest.minecraft.version,
+                    name: `${installed.modpackId}-forge`,
+                    loader: 'forge',
+                    loaderVersion: latestVersion.forgeVersion,
+                    minecraftVersion: latestVersion.minecraftVersion,
                 },
                 launchConfig: {
                     username: profile.username,
@@ -216,28 +174,56 @@ export default function ModpackLauncher() {
                     javaDistribution: 'temurin',
                 },
             });
-            console.log('[launchMicrosoft] result:', result);
+            setState('ready');
         } catch (err) {
-            console.error('[launchMicrosoft] ERROR:', err);
+            console.error('[launchGame]', err);
             setError(String(err));
+            setState('error');
         }
     }
 
+    async function handlePlayOffline() {
+        setState('launching');
+        setError(null);
+        try {
+            // Autenticamos a través de lighty para obtener un perfil offline correcto
+            const profile = await invoke<{ username: string; uuid: string }>('authenticate_offline', {
+                username: username ?? 'KBPlayer',
+            });
 
+            await launchGame(profile);
+        } catch (err) {
+            console.error('[PlayOffline]', err);
+            setError(String(err));
+            setState('error');
+        }
+    }
 
-    const phaseLabel: Record<string, string> = {
-        loader: 'Instalando loader',
-        mods: 'Descargando mods',
-        overrides: 'Copiando configuración',
-        core: 'Descargando assets',
-        java: 'Instalando Java',
-    };
+    async function handlePlayMicrosoft() {
+        setState('launching'); // Asegúrate de cambiar el estado antes
+        setError(null);
+        try {
+            // Usamos el clientId de tus variables de entorno directamente en el invoke global
+            const profile = await invoke<{ username: string; uuid: string }>(
+                'authenticate_microsoft',
+                { clientId: import.meta.env.VITE_AZURE_CLIENT_ID }
+            );
 
+            await launchGame(profile);
+        } catch (err) {
+            console.error('[PlayMicrosoft]', err);
+            setError(String(err));
+            setState('error');
+        }
+    }
+
+    const isBusy = ['checking', 'updating', 'repairing', 'launching'].includes(state);
 
     return (
         <div style={layout.fullscreenCenter}>
             <div style={layout.card}>
 
+                {/* Header */}
                 <div style={header.zone}>
                     <div style={logo.wrap}>
                         <span style={logo.kb}>KB</span>
@@ -247,69 +233,67 @@ export default function ModpackLauncher() {
                     <div style={header.iconWrap}>
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
                             stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <rect x="2" y="3" width="20" height="14" rx="2" />
-                            <path d="M8 21h8M12 17v4" />
+                            <polygon points="5 3 19 12 5 21 5 3" />
                         </svg>
                     </div>
                     <h2 style={header.title}>
-                        {!manifest && 'Selecciona un modpack'}
-                        {manifest && !installed && 'Instalando modpack'}
-                        {installed && 'Listo para jugar'}
+                        {state === 'checking' && 'Comprobando versión'}
+                        {state === 'ready' && 'Listo para jugar'}
+                        {state === 'update-available' && 'Actualización disponible'}
+                        {state === 'updating' && 'Actualizando modpack'}
+                        {state === 'repairing' && 'Reparando instalación'}
+                        {state === 'launching' && 'Lanzando juego'}
+                        {state === 'error' && 'Ha ocurrido un error'}
                     </h2>
                     <p style={header.subtitle}>
-                        {!manifest && 'Arrastra el .zip de CurseForge para comenzar'}
-                        {manifest && !installed && `${manifest.name} · MC ${manifest.minecraft.version}`}
-                        {installed && manifest && `${manifest.name} v${manifest.version}`}
+                        {state === 'checking' && 'Verificando si hay actualizaciones...'}
+                        {state === 'ready' && `${installed.modpackId} · v${installed.version}`}
+                        {state === 'update-available' && `v${installed.version} → v${latestVersion?.version}`}
+                        {state === 'updating' && 'Descargando mods y configs...'}
+                        {state === 'repairing' && 'Reinstalando Forge, mods y configs'}
+                        {state === 'launching' && 'Iniciando Minecraft...'}
+                        {state === 'error' && 'Comprueba tu conexión e inténtalo de nuevo'}
                     </p>
                 </div>
 
-                {!manifest && (
-                    <div
-                        style={{ ...dz.base, ...(dragging ? dz.active : {}) }}
-                        onClick={async () => {
-                            const path = await open({ filters: [{ name: 'Modpack', extensions: ['zip'] }] });
-                            if (typeof path === 'string') await handleZipPath(path);
-                        }}
-                        onDragOver={e => { e.preventDefault(); setDragging(true); }}
-                        onDragLeave={() => setDragging(false)}
-                        onDrop={e => e.preventDefault()}
-                    >
-                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none"
-                            stroke={dragging ? 'var(--accent)' : 'var(--text-faint)'} strokeWidth="1.5"
-                            strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                            <polyline points="17 8 12 3 7 8" />
-                            <line x1="12" y1="3" x2="12" y2="15" />
-                        </svg>
-                        <span style={{ ...dz.label, ...(dragging ? dz.labelActive : {}) }}>
-                            {dragging ? 'Suelta aquí' : 'Seleccionar o arrastrar .zip'}
-                        </span>
-                        <span style={dz.hint}>Formato CurseForge (manifest.json)</span>
-                    </div>
-                )}
-
-                {manifest && (
+                {/* Badge versión */}
+                {latestVersion && (
                     <div style={badge.wrap}>
                         <div style={badge.left}>
                             <div style={badge.dot} />
-                            <span style={badge.label}>MODPACK</span>
+                            <span style={badge.label}>
+                                {state === 'update-available' ? 'VERSIÓN INSTALADA' : 'VERSIÓN'}
+                            </span>
                         </div>
-                        <span style={badge.valueSmall}>{manifest.name} v{manifest.version}</span>
+                        <span style={badge.valueSmall}>
+                            v{installed.version}
+                            {state === 'update-available' && (
+                                <span style={{ color: 'var(--accent)', marginLeft: '8px' }}>
+                                    → v{latestVersion.version} disponible
+                                </span>
+                            )}
+                        </span>
                     </div>
                 )}
 
-                {progress && (
+                {/* Progress */}
+                {progress && isBusy && (
                     <>
                         <div style={pg.container}>
                             <div style={pg.track}>
                                 <div style={{
                                     ...pg.bar,
-                                    width: progress.total > 0 ? `${Math.round((progress.current / progress.total) * 100)}%` : '0%',
+                                    width: progress.total > 1
+                                        ? `${Math.round((progress.current / progress.total) * 100)}%`
+                                        : '100%',
+                                    opacity: progress.total <= 1 ? 0.6 : 1,
                                 }} />
                             </div>
-                            <span style={pg.percentage}>
-                                {progress.total > 0 ? `${Math.round((progress.current / progress.total) * 100)}%` : '—'}
-                            </span>
+                            {progress.total > 1 && (
+                                <span style={pg.percentage}>
+                                    {Math.round((progress.current / progress.total) * 100)}%
+                                </span>
+                            )}
                         </div>
                         <div style={box.status}>
                             <div style={layout.row}>
@@ -317,9 +301,6 @@ export default function ModpackLauncher() {
                                 <div>
                                     <div style={text.phaseLabel}>
                                         {phaseLabel[progress.phase] ?? progress.phase}
-                                        {progress.phase === 'mods' && (
-                                            <span style={text.phaseMuted}> {progress.current}/{progress.total}</span>
-                                        )}
                                     </div>
                                     <div style={text.statusSmall}>{progress.message}</div>
                                 </div>
@@ -328,6 +309,17 @@ export default function ModpackLauncher() {
                     </>
                 )}
 
+                {/* Checking spinner sin progress */}
+                {state === 'checking' && !progress && (
+                    <div style={box.status}>
+                        <div style={layout.row}>
+                            <div style={spinner} />
+                            <span style={text.status}>Conectando con el servidor...</span>
+                        </div>
+                    </div>
+                )}
+
+                {/* Error */}
                 {error && (
                     <div style={box.error}>
                         <div style={layout.row}>
@@ -340,25 +332,127 @@ export default function ModpackLauncher() {
                     </div>
                 )}
 
-                {installed && (
+                {/* Botones principales */}
+                {state === 'ready' && (
+                    <div style={btn.row}>
+                        {!hasMinecraftOwned ? (
+                            <button
+                                style={{ ...btn.primary, ...(playOfflineHovered ? btn.primaryHover : {}) }}
+                                onMouseEnter={() => setPlayOfflineHovered(true)}
+                                onMouseLeave={() => setPlayOfflineHovered(false)}
+                                onClick={handlePlayOffline}
+                            >▶ Jugar Offline</button>
+                        ) : (
+                            <>
+                                <button
+                                    style={{ ...btn.secondary, ...(playOfflineHovered ? btn.secondaryHover : {}) }}
+                                    onMouseEnter={() => setPlayOfflineHovered(true)}
+                                    onMouseLeave={() => setPlayOfflineHovered(false)}
+                                    onClick={handlePlayOffline}
+                                >Jugar Offline</button>
+                                <button
+                                    style={{ ...btn.primary, ...(playMsHovered ? btn.primaryHover : {}) }}
+                                    onMouseEnter={() => setPlayMsHovered(true)}
+                                    onMouseLeave={() => setPlayMsHovered(false)}
+                                    onClick={handlePlayMicrosoft}
+                                >▶ Microsoft</button>
+                            </>
+                        )}
+                    </div>
+                )}
+
+                {/* Update available */}
+                {state === 'update-available' && (
                     <div style={btn.row}>
                         <button
-                            style={{ ...btn.secondary, ...(offlineHovered ? btn.secondaryHover : {}) }}
-                            onMouseEnter={() => setOfflineHovered(true)}
-                            onMouseLeave={() => setOfflineHovered(false)}
-                            onClick={launchOffline}
-                        >Jugar Offline</button>
+                            style={{ ...btn.secondary, ...(playOfflineHovered ? btn.secondaryHover : {}) }}
+                            onMouseEnter={() => setPlayOfflineHovered(true)}
+                            onMouseLeave={() => setPlayOfflineHovered(false)}
+                            onClick={() => setState('ready')}
+                        >Jugar sin actualizar</button>
                         <button
-                            style={{ ...btn.primary, ...(msHovered ? btn.primaryHover : {}) }}
-                            onMouseEnter={() => setMsHovered(true)}
-                            onMouseLeave={() => setMsHovered(false)}
-                            onClick={launchMicrosoft}
-                        >Cuenta Microsoft</button>
+                            style={{ ...btn.primary, ...(updateHovered ? btn.primaryHover : {}) }}
+                            onMouseEnter={() => setUpdateHovered(true)}
+                            onMouseLeave={() => setUpdateHovered(false)}
+                            onClick={handleUpdate}
+                        >Actualizar ahora</button>
+                    </div>
+                )}
+
+                {/* Error — reintentar */}
+                {state === 'error' && (
+                    <div style={btn.row}>
+                        <button
+                            style={{ ...btn.secondary, ...(changeHovered ? btn.secondaryHover : {}) }}
+                            onMouseEnter={() => setChangeHovered(true)}
+                            onMouseLeave={() => setChangeHovered(false)}
+                            onClick={onChangeModpack}
+                        >Cambiar modpack</button>
+                        <button
+                            style={{ ...btn.primary, ...(updateHovered ? btn.primaryHover : {}) }}
+                            onMouseEnter={() => setUpdateHovered(true)}
+                            onMouseLeave={() => setUpdateHovered(false)}
+                            onClick={checkVersion}
+                        >Reintentar</button>
+                    </div>
+                )}
+
+                {/* Acciones secundarias — reparar / desinstalar / cambiar */}
+                {(state === 'ready' || state === 'update-available') && (
+                    <div style={secondaryRow}>
+                        <button
+                            style={{ ...secondaryBtn, ...(repairHovered ? secondaryBtnHover : {}) }}
+                            onMouseEnter={() => setRepairHovered(true)}
+                            onMouseLeave={() => setRepairHovered(false)}
+                            onClick={handleRepair}
+                        >Reparar</button>
+
+                        <button
+                            style={{ ...secondaryBtn, ...(changeHovered ? secondaryBtnHover : {}) }}
+                            onMouseEnter={() => setChangeHovered(true)}
+                            onMouseLeave={() => setChangeHovered(false)}
+                            onClick={onChangeModpack}
+                        >Cambiar modpack</button>
+
+                        <button
+                            style={{ ...secondaryBtn, color: confirmUninstall ? 'var(--accent)' : undefined, ...(uninstallHovered ? secondaryBtnHover : {}) }}
+                            onMouseEnter={() => setUninstallHovered(true)}
+                            onMouseLeave={() => setUninstallHovered(false)}
+                            onClick={() => {
+                                if (!confirmUninstall) { setConfirmUninstall(true); return; }
+                                onUninstall();
+                            }}
+                        >{confirmUninstall ? '¿Confirmar?' : 'Desinstalar'}</button>
                     </div>
                 )}
 
             </div>
         </div>
     );
-
 }
+
+const secondaryRow: React.CSSProperties = {
+    display: 'flex',
+    gap: '8px',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+};
+
+const secondaryBtn: React.CSSProperties = {
+    padding: '6px 12px',
+    backgroundColor: 'transparent',
+    color: 'var(--text-faint)',
+    border: 'none',
+    borderRadius: 'var(--radius-md)',
+    fontFamily: 'var(--font-condensed)',
+    fontSize: '11px',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    cursor: 'pointer',
+    transition: 'color 0.15s',
+};
+
+const secondaryBtnHover: React.CSSProperties = {
+    color: 'var(--text-primary)',
+};

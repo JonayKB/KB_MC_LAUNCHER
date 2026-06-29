@@ -24,9 +24,15 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
 zip = "2"
-lighty-launcher = { version = "0.8.2", features = ["tauri-commands", "all-loaders"] }
+lighty-launcher = { version = "26.5.12", features = [
+    "vanilla",
+    "fabric",
+    "forge",
+    "neoforge",
+] }
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-fs = "2.5.1"
+anyhow = "1.0"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

@@ -2,6 +2,11 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 
+mod minecraft;
+use minecraft::commands::{
+    download_and_extract_zip, download_mod_file, extract_overrides, fetch_text,
+};
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -10,7 +15,6 @@ pub fn run() {
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
-
             let open_item = MenuItem::with_id(app, "open", "Abrir", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Salir", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
@@ -55,14 +59,16 @@ pub fn run() {
 
             Ok(())
         })
-        .plugin(lighty_launcher::tauri::lighty_plugin())
-        .plugin(
-            tauri_plugin_log::Builder::new()
-                .build(),
-        )
+        .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .invoke_handler(tauri::generate_handler![
+            download_mod_file,
+            extract_overrides,
+            download_and_extract_zip,
+            fetch_text,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
