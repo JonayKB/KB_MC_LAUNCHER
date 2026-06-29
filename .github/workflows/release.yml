@@ -44,10 +44,10 @@ jobs:
         include:
           - platform: linux
             args: '--bundles deb,appimage'
-            runner: [Linux, X64]
+            runner: ubuntu-latest
           - platform: windows
             args: '--bundles nsis,msi'
-            runner: [Windows, X64]
+            runner: windows-latest
 
     runs-on: ${{ matrix.runner }}
     defaults:
