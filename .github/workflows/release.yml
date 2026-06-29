@@ -17,7 +17,7 @@ jobs:
       - name: Read version and create tag
         id: tagger
         run: |
-          VERSION=$(node -p "require('./KB-slot-engine/src-tauri/tauri.conf.json').version")
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
           TAG="v$VERSION"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           if git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
@@ -115,7 +115,7 @@ jobs:
             ${{ env.USERPROFILE }}\.cargo\registry\index\
             ${{ env.USERPROFILE }}\.cargo\registry\cache\
             ${{ env.USERPROFILE }}\.cargo\git\db\
-            KB-slot-engine\src-tauri\target\
+            .\src-tauri\target\
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
