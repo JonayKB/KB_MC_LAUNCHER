@@ -134,7 +134,6 @@ jobs:
           echo "RUSTFLAGS=-C codegen-units=16" >> $env:GITHUB_ENV
 
       - name: Install frontend deps
-        working-directory: KB-slot-engine
         run: npm install
 
       - name: Build and Release
