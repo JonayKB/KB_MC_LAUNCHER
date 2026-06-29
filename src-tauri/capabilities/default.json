@@ -1,0 +1,54 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "process:allow-restart",
+    "process:allow-exit",
+    "updater:default",
+    "dialog:allow-open",
+    "fs:allow-read-file",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "program": "docker",
+          "args": [
+            "--version"
+          ]
+        },
+        {
+          "program": "docker",
+          "args": [
+            "compose",
+            "up",
+            "-d"
+          ]
+        },
+        {
+          "program": "sh",
+          "args": [
+            "-c",
+            {
+              "validator": ".*"
+            }
+          ]
+        },
+        {
+          "program": "powershell",
+          "args": [
+            "-Command",
+            {
+              "validator": ".*"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
