@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    kb_slot_engine_lib::run()
+    kb_mc_launcher_lib::run()
 }
