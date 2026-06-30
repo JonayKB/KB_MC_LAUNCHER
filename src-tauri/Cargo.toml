@@ -1,12 +1,12 @@
 [package]
-name = "kb-slot-engine"
+name = "kb-mc-launcher"
 version = "0.3.4"
 description = "KB Minecraft Launcher"
 authors = ["JonayKB"]
 edition = "2021"
 
 [lib]
-name = "kb_slot_engine_lib"
+name = "kb_mc_launcher"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
