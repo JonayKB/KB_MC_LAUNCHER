@@ -6,7 +6,6 @@ import { fetchModpackVersion } from "../repositories/ModpackRepository";
 export default function ModpackDetailScreen() {
     const { id } = useParams<{ id: string }>();
     const [modpack, setModpack] = useState<ModpackVersion | null>(null);
-    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -14,7 +13,6 @@ export default function ModpackDetailScreen() {
                 const modpackData: ModpackVersion = await fetchModpackVersion(id);
                 console.log('Fetched modpack data:', modpackData);
                 setModpack(modpackData);
-                setLoading(false);
             }
         };
         fetchData();
