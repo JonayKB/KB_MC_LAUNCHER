@@ -35,7 +35,7 @@ export default function ModpackDetailScreen() {
     const { id } = useParams<{ id: string }>();
     const [modpack, setModpack] = useState<ModpackVersion | null>(null);
     const [imageIndex, setImageIndex] = useState(0);
-    const [isInstalled, setIsInstalled] = useState(false);
+    const [isInstalled/*, setIsInstalled*/] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
     const [menuHoverId, setMenuHoverId] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
