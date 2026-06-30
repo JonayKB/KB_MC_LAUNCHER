@@ -8,27 +8,27 @@ const IMAGE_ROTATE_MS = 6000;
 
 // ── Acciones vacías por ahora ────────────────────────────────
 function handleInstall(modpack: ModpackVersion) {
-    // TODO: lógica de instalación
+    console.log(`Instalando modpack ${modpack.modpackId}...`);
 }
 
 function handlePlay(modpack: ModpackVersion) {
-    // TODO: lógica de lanzar el juego
+    console.log(`Iniciando modpack ${modpack.modpackId}...`);
 }
 
 function handleRepair(modpack: ModpackVersion) {
-    // TODO: reparar instalación
+    console.log(`Reparando modpack ${modpack.modpackId}...`);
 }
 
 function handleUninstall(modpack: ModpackVersion) {
-    // TODO: desinstalar modpack
+    console.log(`Desinstalando modpack ${modpack.modpackId}...`);
 }
 
 function handleOpenFiles(modpack: ModpackVersion) {
-    // TODO: abrir carpeta de archivos
+    console.log(`Abriendo archivos del modpack ${modpack.modpackId}...`);
 }
 
 function handleOpenSettings(modpack: ModpackVersion) {
-    // TODO: abrir ajustes del modpack
+    console.log(`Abriendo ajustes del modpack ${modpack.modpackId}...`);
 }
 
 export default function ModpackDetailScreen() {
