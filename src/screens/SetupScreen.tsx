@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useUser } from '../context/UserContext';
 import { layout, logo, header, box, text, btn, input as inp } from '../styles/components';
 
 type Step = 'owns_minecraft' | 'offline_username' | 'microsoft_prompt';
 
 export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () => void }>) {
-    const { setHasMinecraftOwned, setUsername } = useUser();
+    const { setHasMinecraftOwned, setUsername, username, hasMinecraftOwned } = useUser();
     const [step, setStep] = useState<Step>('owns_minecraft');
     const [inputUsername, setInputUsername] = useState('');
     const [inputError, setInputError] = useState<string | null>(null);
@@ -25,6 +25,10 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
         setUsername(name);
         onComplete();
     }
+    useEffect(() => {
+        if (username || hasMinecraftOwned === null) onComplete();
+
+    }, [hasMinecraftOwned, username]);
 
     return (
         <div style={layout.fullscreenCenter}>
