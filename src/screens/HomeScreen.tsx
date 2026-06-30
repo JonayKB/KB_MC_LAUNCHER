@@ -1,16 +1,22 @@
 import { useEffect, useState } from "react";
 import { fetchDiscordInvite, DiscordInviteInfo } from "../repositories/DiscordRepository";
-import { discordCard } from "../styles/discordCardStyles";
+import { discordCard, discordSkeleton } from "../styles/discordCardStyles";
 import { open } from '@tauri-apps/plugin-shell';
 
 export default function HomeScreen() {
     const [discord, setDiscord] = useState<DiscordInviteInfo | null>(null);
+    const [discordLoading, setDiscordLoading] = useState(true);
+    const [discordError, setDiscordError] = useState(false);
     const [btnHovered, setBtnHovered] = useState(false);
 
     useEffect(() => {
         fetchDiscordInvite()
-            .then(setDiscord)
-            .catch(() => setDiscord(null));
+            .then((data) => {
+                setDiscord(data);
+                setDiscordError(false);
+            })
+            .catch(() => setDiscordError(true))
+            .finally(() => setDiscordLoading(false));
     }, []);
 
     return (
@@ -20,7 +26,25 @@ export default function HomeScreen() {
                 <p>Selecciona un modpack para comenzar a jugar.</p>
             </div>
 
-            {discord && (
+            {discordLoading && (
+                <div style={discordSkeleton.wrap}>
+                    <div style={discordSkeleton.content}>
+                        <div style={discordSkeleton.topRow}>
+                            <div style={discordSkeleton.pulse('48px', '48px', 'var(--radius-lg)')} />
+                            <div style={discordSkeleton.headerCol}>
+                                <div style={discordSkeleton.pulse('90px', '10px')} />
+                                <div style={discordSkeleton.pulse('140px', '14px')} />
+                            </div>
+                        </div>
+                        <div style={discordSkeleton.pulse('100%', '12px')} />
+                        <div style={discordSkeleton.pulse('70%', '12px')} />
+                        <div style={discordSkeleton.pulse('160px', '12px')} />
+                        <div style={discordSkeleton.pulse('100%', '38px', 'var(--radius-md)')} />
+                    </div>
+                </div>
+            )}
+
+            {!discordLoading && discord && (
                 <div style={discordCard.wrap(discord.guildBannerUrl)}>
                     <div style={discordCard.content}>
                         <div style={discordCard.topRow}>
@@ -63,6 +87,16 @@ export default function HomeScreen() {
                         >
                             Unirse al Discord
                         </button>
+                    </div>
+                </div>
+            )}
+
+            {!discordLoading && discordError && (
+                <div style={discordSkeleton.wrap}>
+                    <div style={discordSkeleton.content}>
+                        <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                            No se pudo cargar la información del Discord.
+                        </span>
                     </div>
                 </div>
             )}

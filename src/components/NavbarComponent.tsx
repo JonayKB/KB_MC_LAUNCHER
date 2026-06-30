@@ -36,7 +36,7 @@ export default function NavbarComponent() {
                     return (
                         <a
                             key={modpack.id}
-                            onClick={isActive ? () => { navigate('') } : () => navigate(`/modpacks/${modpack.id}`)}
+                            onClick={isActive ? () => { navigate('') } : () => navigate(`/modpacks/${modpack.id}`, { state: { name: modpack.name } })}
                             style={item.link(hoveredId === modpack.id, isActive)}
                             onMouseEnter={() => setHoveredId(modpack.id)}
                             onMouseLeave={() => setHoveredId(null)}

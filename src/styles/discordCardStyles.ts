@@ -125,3 +125,45 @@ export const discordCard = {
         transition: 'background-color 0.15s',
     } as S,
 } as const;
+export const discordSkeleton = {
+    wrap: {
+        position: 'fixed',
+        bottom: '24px',
+        right: '24px',
+        width: '360px',
+        borderRadius: 'var(--radius-xl)',
+        border: '1px solid var(--border)',
+        overflow: 'hidden',
+        backgroundColor: 'var(--bg-elevated)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
+        zIndex: 50,
+    } as S,
+
+    content: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+        padding: '18px',
+    } as S,
+
+    topRow: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+    } as S,
+
+    pulse: (width: string, height: string, radius = 'var(--radius-sm)'): S => ({
+        width,
+        height,
+        borderRadius: radius,
+        backgroundColor: 'var(--bg-hover)',
+        animation: 'pulse 1.4s ease-in-out infinite',
+    }),
+
+    headerCol: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+        flex: 1,
+    } as S,
+} as const;

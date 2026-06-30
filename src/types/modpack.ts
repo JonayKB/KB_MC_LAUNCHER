@@ -18,6 +18,7 @@ export interface ModpackVersion {
     modsUrl: string;             // URL a carpeta/zip de mods
     overridesUrl: string;        // URL a carpeta/zip de overrides
     changelog?: string;
+    images?: string[]
 }
 
 export interface InstalledModpack {
