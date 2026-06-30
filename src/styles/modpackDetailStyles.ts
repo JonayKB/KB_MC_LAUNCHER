@@ -131,16 +131,21 @@ export const detail = {
         zIndex: 20,
     } as S,
 
-    dropdownItem: (hovered: boolean, danger?: boolean): S => ({
+    dropdownItem: (hovered: boolean, danger?: boolean, disabled?: boolean): S => ({
         display: 'flex',
         alignItems: 'center',
         gap: '10px',
         padding: '11px 16px',
         fontSize: '14px',
         fontWeight: 500,
-        color: danger ? 'var(--error-text)' : 'var(--text-primary)',
-        backgroundColor: hovered ? 'var(--bg-hover)' : 'transparent',
-        cursor: 'pointer',
+        color: disabled
+            ? 'var(--text-faint)'
+            : danger
+                ? 'var(--error-text)'
+                : 'var(--text-primary)',
+        backgroundColor: !disabled && hovered ? 'var(--bg-hover)' : 'transparent',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
         transition: 'background-color 0.12s',
     }),
 

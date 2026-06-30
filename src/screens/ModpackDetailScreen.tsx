@@ -93,6 +93,7 @@ export default function ModpackDetailScreen() {
             id: 'repair',
             label: 'Reparar',
             onClick: () => handleRepair(modpack),
+            requiresInstall: true,
             icon: (
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
@@ -103,6 +104,7 @@ export default function ModpackDetailScreen() {
             id: 'uninstall',
             label: 'Desinstalar',
             onClick: () => handleUninstall(modpack),
+            requiresInstall: true,
             danger: true,
             icon: (
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -117,6 +119,7 @@ export default function ModpackDetailScreen() {
             id: 'files',
             label: 'Ver archivos',
             onClick: () => handleOpenFiles(modpack),
+            requiresInstall: true,
             icon: (
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -127,6 +130,7 @@ export default function ModpackDetailScreen() {
             id: 'settings',
             label: 'Ajustes del modpack',
             onClick: () => handleOpenSettings(modpack),
+            requiresInstall: true,
             icon: (
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="3" />
@@ -175,23 +179,27 @@ export default function ModpackDetailScreen() {
 
                             {menuOpen && (
                                 <div style={detail.dropdown}>
-                                    {menuItems.map((menuItem, idx) => (
-                                        <div key={menuItem.id}>
-                                            <div
-                                                style={detail.dropdownItem(menuHoverId === menuItem.id, menuItem.danger)}
-                                                onMouseEnter={() => setMenuHoverId(menuItem.id)}
-                                                onMouseLeave={() => setMenuHoverId(null)}
-                                                onClick={() => {
-                                                    menuItem.onClick();
-                                                    setMenuOpen(false);
-                                                }}
-                                            >
-                                                <span style={detail.dropdownIcon}>{menuItem.icon}</span>
-                                                {menuItem.label}
+                                    {menuItems.map((menuItem, idx) => {
+                                        const disabled = menuItem.requiresInstall && !isInstalled;
+                                        return (
+                                            <div key={menuItem.id}>
+                                                <div
+                                                    style={detail.dropdownItem(menuHoverId === menuItem.id, menuItem.danger, disabled)}
+                                                    onMouseEnter={() => !disabled && setMenuHoverId(menuItem.id)}
+                                                    onMouseLeave={() => setMenuHoverId(null)}
+                                                    onClick={() => {
+                                                        if (disabled) return;
+                                                        menuItem.onClick();
+                                                        setMenuOpen(false);
+                                                    }}
+                                                >
+                                                    <span style={detail.dropdownIcon}>{menuItem.icon}</span>
+                                                    {menuItem.label}
+                                                </div>
+                                                {idx === 0 && <div style={detail.dropdownDivider} />}
                                             </div>
-                                            {idx === 0 && <div style={detail.dropdownDivider} />}
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
