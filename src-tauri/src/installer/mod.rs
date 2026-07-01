@@ -2,6 +2,7 @@ pub mod download;
 pub mod extract;
 pub mod loaders;
 pub mod progress;
+pub mod requirements;
 
 pub use progress::ProgressPayload;
 
