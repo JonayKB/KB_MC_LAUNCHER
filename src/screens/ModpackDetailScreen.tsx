@@ -2,31 +2,35 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { ModpackVersion } from "../types";
 import { fetchModpackVersion } from "../repositories/ModpackRepository";
-import { detail, loading } from "../styles/modpackDetailStyles";
+import { detail, loading, installOverlay } from "../styles/modpackDetailStyles";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import { formatBytes, formatSpeed, InstallProgress } from "../types/installer";
+import { useUser } from "../context/UserContext";
 
 const IMAGE_ROTATE_MS = 6000;
 
-// ── Acciones vacías por ahora ────────────────────────────────
-function handleInstall(modpack: ModpackVersion) {
-    console.log(`Instalando modpack ${modpack.modpackId}...`);
-}
-
-function handlePlay(modpack: ModpackVersion) {
-    console.log(`Iniciando modpack ${modpack.modpackId}...`);
+interface ProgressState {
+    step: string;
+    percent: number;
+    downloadedBytes?: number;
+    totalBytes?: number | null;
+    speedBps?: number;
+    extractedFiles?: number;
+    totalFiles?: number;
+    speedFps?: number;
+    mode: 'step' | 'download' | 'extract';
 }
 
 function handleRepair(modpack: ModpackVersion) {
     console.log(`Reparando modpack ${modpack.modpackId}...`);
 }
-
 function handleUninstall(modpack: ModpackVersion) {
     console.log(`Desinstalando modpack ${modpack.modpackId}...`);
 }
-
 function handleOpenFiles(modpack: ModpackVersion) {
     console.log(`Abriendo archivos del modpack ${modpack.modpackId}...`);
 }
-
 function handleOpenSettings(modpack: ModpackVersion) {
     console.log(`Abriendo ajustes del modpack ${modpack.modpackId}...`);
 }
@@ -35,17 +39,24 @@ export default function ModpackDetailScreen() {
     const { id } = useParams<{ id: string }>();
     const [modpack, setModpack] = useState<ModpackVersion | null>(null);
     const [imageIndex, setImageIndex] = useState(0);
-    const [isInstalled/*, setIsInstalled*/] = useState(false);
+    const [isInstalled, setIsInstalled] = useState(false);
+    const [installing, setInstalling] = useState(false);
+    const [launching, setLaunching] = useState(false);
+    const [launchError, setLaunchError] = useState<string | null>(null);
+    const [progress, setProgress] = useState<ProgressState | null>(null);
     const [menuOpen, setMenuOpen] = useState(false);
     const [menuHoverId, setMenuHoverId] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
+    const unlistenRef = useRef<UnlistenFn | null>(null);
     const location = useLocation();
     const name = (location.state as { name?: string } | null)?.name;
+    const { basePath, username } = useUser();
 
+    // Fetch modpack data
     useEffect(() => {
         const fetchData = async () => {
             if (id) {
-                const modpackData: ModpackVersion = await fetchModpackVersion(id);
+                const modpackData = await fetchModpackVersion(id);
                 setModpack(modpackData);
                 setImageIndex(0);
             }
@@ -53,18 +64,26 @@ export default function ModpackDetailScreen() {
         fetchData();
     }, [id]);
 
+    // Comprobar instalación cuando tenemos modpack y basePath
+    useEffect(() => {
+        if (!modpack || !basePath) return;
+        invoke<boolean>('is_modpack_installed', {
+            basePath,
+            modpackId: modpack.modpackId,
+        }).then(setIsInstalled).catch(() => setIsInstalled(false));
+    }, [modpack, basePath]);
+
+    // Rotación de imágenes
     useEffect(() => {
         const images = modpack?.images;
         if (!images || images.length < 2) return;
-
         const interval = setInterval(() => {
             setImageIndex((prev) => (prev + 1) % images.length);
         }, IMAGE_ROTATE_MS);
-
         return () => clearInterval(interval);
     }, [modpack]);
 
-    // Cerrar el menú al hacer click fuera
+    // Cerrar menú al click fuera
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {
             if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -74,6 +93,87 @@ export default function ModpackDetailScreen() {
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
+
+    // Limpieza del listener si desmonta mientras instala
+    useEffect(() => {
+        return () => { unlistenRef.current?.(); };
+    }, []);
+
+    async function handleInstall(modpack: ModpackVersion) {
+        if (!basePath) {
+            console.error('basePath no disponible todavía');
+            return;
+        }
+
+        setInstalling(true);
+        setLaunchError(null);
+        setProgress({ step: 'Iniciando instalación...', percent: 0, mode: 'step' });
+
+        unlistenRef.current = await listen<InstallProgress>('install_progress', (e) => {
+            const p = e.payload;
+            if (p.type === 'step') {
+                setProgress({ step: p.step, percent: p.percent, mode: 'step' });
+            } else if (p.type === 'download') {
+                setProgress({
+                    step: p.step,
+                    percent: p.percent,
+                    mode: 'download',
+                    downloadedBytes: p.downloaded_bytes,
+                    totalBytes: p.total_bytes,
+                    speedBps: p.speed_bps,
+                });
+            } else if (p.type === 'extract') {
+                setProgress({
+                    step: p.step,
+                    percent: p.percent,
+                    mode: 'extract',
+                    extractedFiles: p.extracted_files,
+                    totalFiles: p.total_files,
+                    speedFps: p.speed_fps,
+                });
+            }
+        });
+
+        try {
+            await invoke('install_modpack', {
+                basePath,
+                mcVersion: modpack.minecraftVersion,
+                loader: 'forge',
+                loaderVersion: modpack.forgeVersion,
+                overridesUrl: modpack.overridesUrl,
+                modsUrl: modpack.modsUrl,
+                modpackId: modpack.modpackId,
+            });
+            setIsInstalled(true);
+        } catch (err) {
+            console.error('Error durante la instalación:', err);
+            setLaunchError(`Error de instalación: ${err}`);
+        } finally {
+            unlistenRef.current?.();
+            setInstalling(false);
+            setProgress(null);
+        }
+    }
+
+    async function handlePlay(modpack: ModpackVersion) {
+        if (!basePath) return;
+        setLaunching(true);
+        setLaunchError(null);
+        try {
+            await invoke('launch_modpack', {
+                basePath,
+                modpackId: modpack.modpackId,
+                mcVersion: modpack.minecraftVersion,
+                forgeVersion: modpack.forgeVersion,
+                username: username ?? 'Player',
+            });
+        } catch (err) {
+            console.error('Error al lanzar el modpack:', err);
+            setLaunchError(`Error al lanzar: ${err}`);
+        } finally {
+            setLaunching(false);
+        }
+    }
 
     if (!modpack) {
         return (
@@ -87,62 +187,119 @@ export default function ModpackDetailScreen() {
     }
 
     const bgUrl = modpack.images?.[imageIndex] ?? null;
+    const isBusy = installing || launching;
 
     const menuItems = [
         {
-            id: 'repair',
-            label: 'Reparar',
+            id: 'repair', label: 'Reparar', requiresInstall: true,
             onClick: () => handleRepair(modpack),
-            requiresInstall: true,
-            icon: (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                </svg>
-            ),
+            icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>,
         },
         {
-            id: 'uninstall',
-            label: 'Desinstalar',
+            id: 'uninstall', label: 'Desinstalar', requiresInstall: true, danger: true,
             onClick: () => handleUninstall(modpack),
-            requiresInstall: true,
-            danger: true,
-            icon: (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    <line x1="10" y1="11" x2="10" y2="17" />
-                    <line x1="14" y1="11" x2="14" y2="17" />
-                </svg>
-            ),
+            icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></svg>,
         },
         {
-            id: 'files',
-            label: 'Ver archivos',
+            id: 'files', label: 'Ver archivos', requiresInstall: true,
             onClick: () => handleOpenFiles(modpack),
-            requiresInstall: true,
-            icon: (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                </svg>
-            ),
+            icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>,
         },
         {
-            id: 'settings',
-            label: 'Ajustes del modpack',
+            id: 'settings', label: 'Ajustes del modpack', requiresInstall: false,
             onClick: () => handleOpenSettings(modpack),
-            requiresInstall: true,
-            icon: (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                </svg>
-            ),
+            icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>,
         },
     ];
+
+    const playButtonLabel = () => {
+        if (installing) return 'Instalando...';
+        if (launching) return 'Lanzando...';
+        if (isInstalled) return 'Jugar';
+        return 'Instalar';
+    };
 
     return (
         <div style={detail.screen(bgUrl)}>
             <div style={detail.overlay} />
+
+            {/* ── Overlay de instalación ───────────────────────── */}
+            {installing && progress && (
+                <div style={installOverlay.wrap}>
+                    <div style={installOverlay.card}>
+                        <div style={installOverlay.header}>
+                            <span style={installOverlay.title}>Instalando modpack</span>
+                            <span style={installOverlay.step}>{progress.step}</span>
+                        </div>
+
+                        <div style={installOverlay.trackWrap}>
+                            <div style={installOverlay.trackRow}>
+                                <span style={{ fontSize: '12px', color: 'var(--text-faint)' }}>Progreso</span>
+                                <span style={installOverlay.percent}>{progress.percent}%</span>
+                            </div>
+                            <div style={installOverlay.track}>
+                                <div style={installOverlay.bar(progress.percent)} />
+                            </div>
+                        </div>
+
+                        {progress.mode === 'download' && (
+                            <>
+                                <div style={installOverlay.divider} />
+                                <div style={installOverlay.statsRow}>
+                                    <div style={installOverlay.stat}>
+                                        <span style={installOverlay.statLabel}>Descargado</span>
+                                        <span style={installOverlay.statValue}>
+                                            {formatBytes(progress.downloadedBytes ?? 0)}
+                                            {progress.totalBytes ? ` / ${formatBytes(progress.totalBytes)}` : ''}
+                                        </span>
+                                    </div>
+                                    <div style={installOverlay.stat}>
+                                        <span style={installOverlay.statLabel}>Velocidad</span>
+                                        <span style={installOverlay.statValue}>
+                                            {formatSpeed(progress.speedBps ?? 0)}
+                                        </span>
+                                    </div>
+                                    {progress.totalBytes && (
+                                        <div style={installOverlay.stat}>
+                                            <span style={installOverlay.statLabel}>Restante</span>
+                                            <span style={installOverlay.statValue}>
+                                                {formatBytes(progress.totalBytes - (progress.downloadedBytes ?? 0))}
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        )}
+
+                        {progress.mode === 'extract' && (
+                            <>
+                                <div style={installOverlay.divider} />
+                                <div style={installOverlay.statsRow}>
+                                    <div style={installOverlay.stat}>
+                                        <span style={installOverlay.statLabel}>Archivos</span>
+                                        <span style={installOverlay.statValue}>
+                                            {progress.extractedFiles ?? 0} / {progress.totalFiles ?? 0}
+                                        </span>
+                                    </div>
+                                    <div style={installOverlay.stat}>
+                                        <span style={installOverlay.statLabel}>Velocidad</span>
+                                        <span style={installOverlay.statValue}>
+                                            {(progress.speedFps ?? 0).toFixed(1)} arch/s
+                                        </span>
+                                    </div>
+                                    <div style={installOverlay.stat}>
+                                        <span style={installOverlay.statLabel}>Restantes</span>
+                                        <span style={installOverlay.statValue}>
+                                            {(progress.totalFiles ?? 0) - (progress.extractedFiles ?? 0)}
+                                        </span>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
             <div style={detail.content}>
                 <div style={detail.infoRow}>
                     <div style={detail.textCol}>
@@ -151,24 +308,38 @@ export default function ModpackDetailScreen() {
                             <span style={detail.metaTag}>MC {modpack.minecraftVersion}</span>
                             <span style={detail.metaTag}>Forge {modpack.forgeVersion}</span>
                         </div>
+                        {launchError && (
+                            <span style={{
+                                fontSize: '12px',
+                                color: 'var(--error-text)',
+                                marginTop: '6px',
+                                maxWidth: '480px',
+                                wordBreak: 'break-word',
+                            }}>
+                                {launchError}
+                            </span>
+                        )}
                     </div>
 
                     <div style={detail.actionsCol}>
                         <button
-                            style={detail.playButton}
-                            onClick={() => (isInstalled ? handlePlay(modpack) : handleInstall(modpack))}
+                            style={{
+                                ...detail.playButton,
+                                opacity: isBusy || !basePath ? 0.5 : 1,
+                                cursor: isBusy || !basePath ? 'not-allowed' : 'pointer',
+                            }}
+                            disabled={isBusy || !basePath}
+                            onClick={() => isInstalled ? handlePlay(modpack) : handleInstall(modpack)}
                         >
-                            {isInstalled ? 'Jugar' : 'Instalar'}
+                            {playButtonLabel()}
                         </button>
 
                         <div style={detail.menuWrap} ref={menuRef}>
                             <button
-                                style={{
-                                    ...detail.menuButton,
-                                    ...(menuOpen ? detail.menuButtonHover : {}),
-                                }}
+                                style={{ ...detail.menuButton, ...(menuOpen ? detail.menuButtonHover : {}) }}
                                 onClick={() => setMenuOpen((v) => !v)}
                                 aria-label="Más opciones"
+                                disabled={isBusy}
                             >
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                                     <circle cx="12" cy="5" r="2" />

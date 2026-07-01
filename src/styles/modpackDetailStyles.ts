@@ -199,3 +199,119 @@ export const loading = {
         color: 'var(--text-faint)',
     } as S,
 } as const;
+
+export const installOverlay = {
+    wrap: {
+        position: 'absolute',
+        inset: 0,
+        background: 'rgba(8,8,9,0.85)',
+        backdropFilter: 'blur(6px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 10,
+    } as S,
+
+    card: {
+        width: '100%',
+        maxWidth: '520px',
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border)',
+        borderTop: '2px solid var(--accent)',
+        borderRadius: 'var(--radius-xl)',
+        padding: '32px 36px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '20px',
+    } as S,
+
+    header: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+    } as S,
+
+    title: {
+        fontFamily: 'var(--font-condensed)',
+        fontSize: '11px',
+        fontWeight: 700,
+        letterSpacing: '0.14em',
+        textTransform: 'uppercase',
+        color: 'var(--accent)',
+    } as S,
+
+    step: {
+        fontFamily: 'var(--font-condensed)',
+        fontSize: '20px',
+        fontWeight: 800,
+        color: 'var(--text-primary)',
+        letterSpacing: '0.01em',
+    } as S,
+
+    trackWrap: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+    } as S,
+
+    trackRow: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    } as S,
+
+    percent: {
+        fontFamily: 'var(--font-condensed)',
+        fontSize: '13px',
+        fontWeight: 700,
+        color: 'var(--accent)',
+    } as S,
+
+    track: {
+        height: '6px',
+        borderRadius: '3px',
+        background: 'var(--bg-hover)',
+        overflow: 'hidden',
+    } as S,
+
+    bar: (pct: number): S => ({
+        height: '100%',
+        width: `${pct}%`,
+        background: 'var(--accent)',
+        borderRadius: '3px',
+        transition: 'width 0.3s ease',
+    }),
+
+    statsRow: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '24px',
+    } as S,
+
+    stat: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '2px',
+    } as S,
+
+    statLabel: {
+        fontFamily: 'var(--font-condensed)',
+        fontSize: '10px',
+        fontWeight: 700,
+        letterSpacing: '0.1em',
+        textTransform: 'uppercase',
+        color: 'var(--text-faint)',
+    } as S,
+
+    statValue: {
+        fontFamily: 'var(--font-condensed)',
+        fontSize: '16px',
+        fontWeight: 700,
+        color: 'var(--text-primary)',
+    } as S,
+
+    divider: {
+        height: '1px',
+        background: 'var(--border)',
+    } as S,
+} as const;
