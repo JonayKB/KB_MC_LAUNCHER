@@ -1,7 +1,7 @@
 use crate::installer::download;
 use crate::installer::progress::{emit, ProgressPayload};
 use crate::installer::requirements::{
-    check_java_by_minecraft_version, get_java_binary, install_java_by_minecraft_version,
+    check_java_by_minecraft_version, get_java_binary_async, install_java_by_minecraft_version,
 };
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -48,7 +48,7 @@ pub async fn install(
         }
     }
 
-    let java_bin = get_java_binary(launcher_root);
+    let java_bin = get_java_binary_async(launcher_root).await;
     log::info!("[forge::install] Usando Java: {}", java_bin);
 
     tokio::fs::create_dir_all(versions_dir).await.ok();
