@@ -328,32 +328,52 @@ pub async fn install_java(min_version: &str) -> Result<()> {
 #[cfg(target_os = "windows")]
 async fn install_java_direct(min_version: &str) -> Result<()> {
     log::info!(
-        "[requirements::install_java_direct] Descargando Java {} directamente...",
+        "[requirements::install_java_direct] Descargando Java {} portable (ZIP)...",
         min_version
     );
 
-    let (url, filename) = match min_version {
+    // ZIP portable — no requiere admin, se extrae en AppData del usuario
+    let (url, folder_name) = match min_version {
         "21" => (
-            "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.3%2B9/OpenJDK21U-jre_x64_windows_hotspot_21.0.3_9.msi",
-            "java21-installer.msi"
+            "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.3%2B9/OpenJDK21U-jre_x64_windows_hotspot_21.0.3_9.zip",
+            "jdk-21.0.3+9-jre"
         ),
         "17" => (
-            "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jre_x64_windows_hotspot_17.0.11_9.msi",
-            "java17-installer.msi"
+            "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jre_x64_windows_hotspot_17.0.11_9.zip",
+            "jdk-17.0.11+9-jre"
         ),
         "8" => (
-            "https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u412-b08/OpenJDK8U-jre_x64_windows_hotspot_8u412b08.msi",
-            "java8-installer.msi"
+            "https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u412-b08/OpenJDK8U-jre_x64_windows_hotspot_8u412b08.zip",
+            "jdk8u412-b08-jre"
         ),
         _ => return Err(anyhow!("Versión Java no soportada: {}", min_version)),
     };
 
-    let tmp = std::env::temp_dir().join(filename);
+    // Directorio de destino: %LOCALAPPDATA%\kb-mc-launcher\java
+    let java_dir = std::env::var("LOCALAPPDATA")
+        .map(|p| {
+            std::path::PathBuf::from(p)
+                .join("kb-mc-launcher")
+                .join("java")
+        })
+        .unwrap_or_else(|_| std::path::PathBuf::from("java"));
+
+    tokio::fs::create_dir_all(&java_dir)
+        .await
+        .context("No se pudo crear directorio Java")?;
+
+    let zip_path = java_dir.join(format!("java{}.zip", min_version));
+
     log::info!(
         "[requirements::install_java_direct] Descargando desde: {}",
         url
     );
+    log::info!(
+        "[requirements::install_java_direct] Destino ZIP: {:?}",
+        zip_path
+    );
 
+    // Descargar
     let response = reqwest::get(url)
         .await
         .context("Error descargando Java")?
@@ -361,67 +381,75 @@ async fn install_java_direct(min_version: &str) -> Result<()> {
         .context("El servidor devolvió error")?;
 
     let bytes = response.bytes().await.context("Error leyendo descarga")?;
-    tokio::fs::write(&tmp, &bytes)
+    tokio::fs::write(&zip_path, &bytes)
         .await
-        .context("Error guardando instalador")?;
+        .context("Error guardando ZIP")?;
 
     log::info!(
-        "[requirements::install_java_direct] Instalador guardado en {:?}",
-        tmp
+        "[requirements::install_java_direct] ZIP descargado ({} MB)",
+        bytes.len() / 1024 / 1024
     );
-    log::info!("[requirements::install_java_direct] Ejecutando MSI silencioso...");
 
-    // /quiet = sin UI, /norestart = no reiniciar
-    let output = Command::new("msiexec")
+    // Extraer con PowerShell (no requiere herramientas extra)
+    log::info!("[requirements::install_java_direct] Extrayendo ZIP...");
+    let output = Command::new("powershell")
         .args([
-            "/i",
-            tmp.to_str().unwrap(),
-            "/quiet",
-            "/norestart",
-            "ADDLOCAL=FeatureMain",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!(
+                "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
+                zip_path.to_string_lossy(),
+                java_dir.to_string_lossy()
+            ),
         ])
         .output()
         .await
-        .context("Error ejecutando msiexec")?;
+        .context("Error ejecutando PowerShell para extraer ZIP")?;
 
-    tokio::fs::remove_file(&tmp).await.ok();
+    tokio::fs::remove_file(&zip_path).await.ok();
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    log::debug!(
-        "[requirements::install_java_direct] msiexec stdout: {}",
-        stdout
-    );
-    log::debug!(
-        "[requirements::install_java_direct] msiexec stderr: {}",
-        stderr
-    );
-    log::debug!(
-        "[requirements::install_java_direct] msiexec exit code: {:?}",
-        output.status.code()
-    );
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!(
+            "[requirements::install_java_direct] PowerShell falló: {}",
+            stderr
+        );
+        return Err(anyhow!("Error extrayendo Java: {}", stderr));
+    }
 
-    // msiexec devuelve 0 o 3010 (éxito, requiere reinicio) como códigos de éxito
-    let code = output.status.code().unwrap_or(-1);
-    if code == 0 || code == 3010 {
-        if code == 3010 {
-            log::warn!("[requirements::install_java_direct] Java instalado pero requiere reinicio del sistema");
-        } else {
-            log::info!(
-                "[requirements::install_java_direct] Java {} instalado correctamente via MSI",
-                min_version
-            );
+    // El ZIP extrae en java_dir/jdk-17.0.11+9-jre/bin/java.exe
+    // Renombramos a java_dir/jre/ para que get_java_binary lo encuentre siempre igual
+    let extracted = java_dir.join(folder_name);
+    let final_dir = java_dir.join("jre");
+
+    if extracted.exists() {
+        if final_dir.exists() {
+            tokio::fs::remove_dir_all(&final_dir).await.ok();
         }
+        tokio::fs::rename(&extracted, &final_dir)
+            .await
+            .context("Error renombrando directorio Java")?;
+        log::info!(
+            "[requirements::install_java_direct] Java extraído en: {:?}",
+            final_dir
+        );
+    }
+
+    let java_bin = final_dir.join("bin").join("java.exe");
+    if java_bin.exists() {
+        log::info!(
+            "[requirements::install_java_direct] ✓ Java {} instalado correctamente en {:?}",
+            min_version,
+            java_bin
+        );
         Ok(())
     } else {
         log::error!(
-            "[requirements::install_java_direct] msiexec falló con código {}",
-            code
+            "[requirements::install_java_direct] java.exe no encontrado tras extracción: {:?}",
+            java_bin
         );
-        Err(anyhow!(
-            "No se pudo instalar Java {}. Instálalo manualmente desde https://adoptium.net (código {})",
-            min_version, code
-        ))
+        Err(anyhow!("Java no se extrajo correctamente"))
     }
 }
 
@@ -594,58 +622,41 @@ pub async fn install_java_by_minecraft_version(minecraft_version: &str) -> Resul
     result
 }
 
-pub fn get_java_binary(launcher_root: &std::path::Path) -> String {
-    // 1. Java propio del launcher
-    let local = if cfg!(windows) {
-        launcher_root.join("java/jdk-17.0.11+9/bin/java.exe")
-    } else {
-        launcher_root.join("java/bin/java")
-    };
-
-    if local.exists() {
-        let path = local.to_string_lossy().to_string();
-        log::info!(
-            "[requirements::get_java_binary] Usando Java del launcher: {}",
-            path
-        );
-        return path;
-    }
-
-    // 2. Java del sistema (PATH)
-    let system = if cfg!(windows) { "java.exe" } else { "java" };
-    log::info!(
-        "[requirements::get_java_binary] Usando Java del sistema: {}",
-        system
-    );
-    system.to_string()
-}
 pub async fn get_java_binary_async(launcher_root: &std::path::Path) -> String {
-    // 1. Java propio del launcher
+    // 1. Java junto a los datos del launcher
     let local = if cfg!(windows) {
-        launcher_root.join("java/jdk-17.0.11+9/bin/java.exe")
+        launcher_root.join("java/jre/bin/java.exe")
     } else {
         launcher_root.join("java/bin/java")
     };
 
     if local.exists() {
         let path = local.to_string_lossy().to_string();
-        log::info!(
-            "[requirements::get_java_binary_async] Usando Java del launcher: {}",
-            path
-        );
+        log::info!("[requirements::get_java_binary_async] Java del launcher: {}", path);
         return path;
     }
 
-    // 2. Buscar en todo el sistema
+    // 2. Java portable en LOCALAPPDATA (Windows)
+    #[cfg(target_os = "windows")]
+    if let Ok(local_app) = std::env::var("LOCALAPPDATA") {
+        let portable = std::path::PathBuf::from(&local_app)
+            .join("kb-mc-launcher/java/jre/bin/java.exe");
+        if portable.exists() {
+            let path = portable.to_string_lossy().to_string();
+            log::info!("[requirements::get_java_binary_async] Java portable LOCALAPPDATA: {}", path);
+            return path;
+        }
+        log::debug!("[requirements::get_java_binary_async] No encontrado en LOCALAPPDATA: {:?}", portable);
+    }
+
+    // 3. Buscar en ubicaciones conocidas del sistema
     if let Some(found) = find_java_in_system().await {
+        log::info!("[requirements::get_java_binary_async] Java encontrado en sistema: {}", found);
         return found;
     }
 
-    // 3. Fallback al PATH
+    // 4. Fallback al PATH
     let system = if cfg!(windows) { "java.exe" } else { "java" };
-    log::warn!(
-        "[requirements::get_java_binary_async] Fallback a PATH: {}",
-        system
-    );
+    log::warn!("[requirements::get_java_binary_async] Fallback a PATH: {}", system);
     system.to_string()
 }
