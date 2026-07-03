@@ -10,6 +10,7 @@ interface RecommendedSettings {
     max_ram_mb: number;
     extra_jvm_args: string;
 }
+
 export function loadSettings(modpackId: string): ModpackSettings {
     try {
         const raw = localStorage.getItem(SETTINGS_KEY(modpackId));
@@ -26,6 +27,11 @@ function formatMb(mb: number): string {
     return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
 }
 
+// Redondear al múltiplo de 256 más cercano
+function snapTo256(value: number): number {
+    return Math.round(value / 256) * 256;
+}
+
 interface Props {
     modpackId: string;
     modpackName: string;
@@ -36,31 +42,39 @@ interface Props {
 export default function ModpackSettingsModal({ modpackId, modpackName, onClose, onSave }: Props) {
     const [settings, setSettings] = useState<ModpackSettings>(() => loadSettings(modpackId));
     const [recommended, setRecommended] = useState<RecommendedSettings | null>(null);
+    const [totalRamMb, setTotalRamMb] = useState<number>(8192); // fallback
     const [closeBtnHovered, setCloseBtnHovered] = useState(false);
     const [saveHovered, setSaveHovered] = useState(false);
     const [cancelHovered, setCancelHovered] = useState(false);
+    const [recBtnHovered, setRecBtnHovered] = useState(false);
+
     useEffect(() => {
-        invoke<RecommendedSettings>('get_recommended_settings')
-            .then(setRecommended)
+        invoke<RecommendedSettings & { total_ram_mb?: number }>('get_recommended_settings')
+            .then(rec => {
+                setRecommended(rec);
+                // total_ram_mb lo añadimos al comando de Rust (ver abajo)
+                if (rec.total_ram_mb) setTotalRamMb(rec.total_ram_mb);
+            })
             .catch(() => { });
     }, []);
 
-    // Botón para aplicar recomendados
+    // Rango del slider: 25% de la RAM total → 100% de la RAM total
+    const sliderMin = Math.max(512, snapTo256(totalRamMb * 0.25));
+    const sliderMax = snapTo256(totalRamMb);
+
     function applyRecommended() {
         if (!recommended) return;
         setSettings(prev => ({
             ...prev,
             minRamMb: recommended.min_ram_mb,
             maxRamMb: recommended.max_ram_mb,
-            extraJvmArgs: recommended.extra_jvm_args,
+            // NO tocamos extraJvmArgs aquí — el usuario los gestiona aparte
         }));
     }
 
-    // Detectar preset de resolución seleccionado
     const resPreset = RESOLUTIONS.find(
         r => r.width === settings.windowWidth && r.height === settings.windowHeight
-    ) ?? RESOLUTIONS[RESOLUTIONS.length - 1]; // Personalizado
-
+    ) ?? RESOLUTIONS[RESOLUTIONS.length - 1];
     const isCustomRes = resPreset.width === 0;
 
     function set<K extends keyof ModpackSettings>(key: K, value: ModpackSettings[K]) {
@@ -82,11 +96,8 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
         onClose();
     }
 
-    // Cerrar con Escape
     useEffect(() => {
-        const handler = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onClose();
-        };
+        const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
         document.addEventListener('keydown', handler);
         return () => document.removeEventListener('keydown', handler);
     }, [onClose]);
@@ -121,42 +132,144 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
                 {/* ── Body ── */}
                 <div style={modal.body}>
 
-                    {/* RAM */}
-                    <div style={{ ...modal.row, marginBottom: '4px' }}>
-                        <span style={modal.sectionTitle}>Memoria RAM</span>
-                        {recommended && (
+                    {/* ── RAM ── */}
+                    <div style={modal.section}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={modal.sectionTitle}>Memoria RAM</span>
                             <button
                                 onClick={applyRecommended}
+                                disabled={!recommended}
                                 style={{
                                     background: 'transparent',
-                                    border: '1px solid var(--border)',
+                                    border: `1px solid ${recBtnHovered && recommended ? 'var(--accent)' : 'var(--border)'}`,
                                     borderRadius: 'var(--radius-sm)',
-                                    color: 'var(--text-faint)',
+                                    color: recBtnHovered && recommended ? 'var(--accent)' : 'var(--text-faint)',
                                     fontFamily: 'var(--font-condensed)',
                                     fontSize: '10px',
                                     fontWeight: 700,
                                     letterSpacing: '0.08em',
                                     textTransform: 'uppercase',
                                     padding: '3px 8px',
-                                    cursor: 'pointer',
+                                    cursor: recommended ? 'pointer' : 'default',
+                                    opacity: recommended ? 1 : 0.4,
+                                    transition: 'border-color 0.15s, color 0.15s',
                                 }}
+                                onMouseEnter={() => setRecBtnHovered(true)}
+                                onMouseLeave={() => setRecBtnHovered(false)}
                             >
-                                Aplicar recomendados
+                                {recommended ? 'Aplicar recomendados' : 'Calculando...'}
                             </button>
+                        </div>
+
+                        {/* Info del sistema */}
+                        {recommended && (
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '11px',
+                                color: 'var(--text-faint)',
+                            }}>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                                </svg>
+                                RAM total del sistema: {formatMb(totalRamMb)} — Recomendado: {formatMb(recommended.min_ram_mb)} – {formatMb(recommended.max_ram_mb)}
+                            </div>
+                        )}
+
+                        {/* RAM mínima */}
+                        <div>
+                            <div style={{ ...modal.row, marginBottom: '6px' }}>
+                                <span style={modal.label}>RAM mínima</span>
+                                <span style={modal.valueTag}>{formatMb(settings.minRamMb)}</span>
+                            </div>
+                            <input
+                                type="range"
+                                min={sliderMin}
+                                max={sliderMax}
+                                step={256}
+                                value={settings.minRamMb}
+                                onChange={e => {
+                                    const val = Number(e.target.value);
+                                    set('minRamMb', val);
+                                    // Si min supera max, ajustar max
+                                    if (val > settings.maxRamMb) {
+                                        set('maxRamMb', Math.min(val + 512, sliderMax));
+                                    }
+                                }}
+                                style={modal.slider}
+                            />
+                            <div style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                fontSize: '10px',
+                                color: 'var(--text-faint)',
+                                marginTop: '2px',
+                            }}>
+                                <span>{formatMb(sliderMin)}</span>
+                                <span>{formatMb(sliderMax)}</span>
+                            </div>
+                        </div>
+
+                        {/* RAM máxima */}
+                        <div>
+                            <div style={{ ...modal.row, marginBottom: '6px' }}>
+                                <span style={modal.label}>RAM máxima</span>
+                                <span style={modal.valueTag}>{formatMb(settings.maxRamMb)}</span>
+                            </div>
+                            <input
+                                type="range"
+                                min={sliderMin}
+                                max={sliderMax}
+                                step={256}
+                                value={settings.maxRamMb}
+                                onChange={e => {
+                                    const val = Number(e.target.value);
+                                    set('maxRamMb', val);
+                                    // Si max cae por debajo de min, ajustar min
+                                    if (val < settings.minRamMb) {
+                                        set('minRamMb', Math.max(val - 512, sliderMin));
+                                    }
+                                }}
+                                style={modal.slider}
+                            />
+                            <div style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                fontSize: '10px',
+                                color: 'var(--text-faint)',
+                                marginTop: '2px',
+                            }}>
+                                <span>{formatMb(sliderMin)}</span>
+                                <span>{formatMb(sliderMax)}</span>
+                            </div>
+                        </div>
+
+                        {/* Advertencia si max RAM es muy alta */}
+                        {settings.maxRamMb > totalRamMb * 0.8 && (
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '11px',
+                                color: 'var(--warning)',
+                                padding: '6px 10px',
+                                background: 'rgba(245,158,11,0.08)',
+                                borderRadius: 'var(--radius-md)',
+                                border: '1px solid rgba(245,158,11,0.2)',
+                            }}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                                    <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+                                </svg>
+                                Asignar más del 80% de la RAM puede ralentizar el sistema operativo.
+                            </div>
                         )}
                     </div>
 
-                    {/* Mostrar qué recomienda el sistema */}
-                    {recommended && (
-                        <span style={{ fontSize: '11px', color: 'var(--text-faint)' }}>
-                            Tu sistema: recomendado {formatMb(recommended.min_ram_mb)} – {formatMb(recommended.max_ram_mb)}
-                        </span>
-                    )}
-
-
                     <div style={modal.divider} />
 
-                    {/* Pantalla */}
+                    {/* ── Pantalla ── */}
                     <div style={modal.section}>
                         <span style={modal.sectionTitle}>Pantalla</span>
 
@@ -174,11 +287,10 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
                             <>
                                 <select
                                     style={modal.select}
-                                    value={RESOLUTIONS.findIndex(
-                                        r => r.width === settings.windowWidth && r.height === settings.windowHeight
-                                    ) === -1
-                                        ? RESOLUTIONS.length - 1
-                                        : RESOLUTIONS.findIndex(r => r.width === settings.windowWidth && r.height === settings.windowHeight)
+                                    value={
+                                        RESOLUTIONS.findIndex(r => r.width === settings.windowWidth && r.height === settings.windowHeight) === -1
+                                            ? RESOLUTIONS.length - 1
+                                            : RESOLUTIONS.findIndex(r => r.width === settings.windowWidth && r.height === settings.windowHeight)
                                     }
                                     onChange={handleResolutionChange}
                                 >
@@ -215,7 +327,7 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
 
                     <div style={modal.divider} />
 
-                    {/* JVM args extra */}
+                    {/* ── JVM args extra ── */}
                     <div style={modal.section}>
                         <span style={modal.sectionTitle}>Argumentos JVM adicionales</span>
                         <textarea
@@ -226,7 +338,7 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
                             spellCheck={false}
                         />
                         <span style={{ fontSize: '11px', color: 'var(--text-faint)', lineHeight: 1.4 }}>
-                            Uno por línea o separados por espacio. Se añaden al final de los args JVM.
+                            Separados por espacio o uno por línea. Se añaden al final de los args JVM de Forge.
                         </span>
                     </div>
 

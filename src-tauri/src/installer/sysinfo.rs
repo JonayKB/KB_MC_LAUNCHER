@@ -12,7 +12,9 @@ pub struct RecommendedSettings {
     pub min_ram_mb: u32,
     pub max_ram_mb: u32,
     pub extra_jvm_args: String,
+    pub total_ram_mb: u64,  
 }
+
 
 pub fn get_system_info() -> SystemInfo {
     let total_ram_mb = get_total_ram_mb();
@@ -101,7 +103,13 @@ pub fn recommend_settings(info: &SystemInfo) -> RecommendedSettings {
     let extra_jvm_args = args.join(" ");
     log::info!("[sysinfo] Args recomendados generados ({} args)", args.len());
 
-    RecommendedSettings { min_ram_mb, max_ram_mb, extra_jvm_args }
+    RecommendedSettings {
+        min_ram_mb,
+        max_ram_mb,
+        extra_jvm_args,
+        total_ram_mb: info.total_ram_mb, 
+    }
+
 }
 
 // ── OS-specific RAM detection ─────────────────────────────────
