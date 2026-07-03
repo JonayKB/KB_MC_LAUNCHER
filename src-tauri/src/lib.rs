@@ -65,7 +65,10 @@ pub fn run() {
          commands::fetch_text,
          commands::get_base_path,
          commands::is_modpack_installed,   
-         commands::launch_modpack,         
+         commands::launch_modpack,   
+         commands::open_directory,
+         commands::uninstall_modpack, 
+         commands::get_recommended_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

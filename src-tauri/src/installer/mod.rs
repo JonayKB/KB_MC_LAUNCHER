@@ -3,9 +3,10 @@ pub mod extract;
 pub mod loaders;
 pub mod progress;
 pub mod requirements;
+pub mod sysinfo;
 
 pub use progress::ProgressPayload;
-
+use crate::installer::sysinfo::{get_system_info, recommend_settings, RecommendedSettings};
 use anyhow::{Context, Result};
 use std::path::Path;
 use tauri::AppHandle;

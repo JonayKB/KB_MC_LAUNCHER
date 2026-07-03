@@ -11,7 +11,7 @@
     "process:allow-restart",
     "process:allow-exit",
     "updater:default",
-    "dialog:allow-open",
+    "dialog:default",
     "fs:allow-read-file",
     "shell:allow-open",
     {

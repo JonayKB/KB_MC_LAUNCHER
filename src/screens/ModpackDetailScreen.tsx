@@ -7,7 +7,9 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { formatBytes, formatSpeed, InstallProgress } from "../types/installer";
 import { useUser } from "../context/UserContext";
-
+import { ask } from '@tauri-apps/plugin-dialog';
+import { ModpackSettings } from "../types/modpackSettings";
+import ModpackSettingsModal, { loadSettings } from "../components/ModpackSettignsModal";
 const IMAGE_ROTATE_MS = 6000;
 
 interface ProgressState {
@@ -24,15 +26,6 @@ interface ProgressState {
 
 function handleRepair(modpack: ModpackVersion) {
     console.log(`Reparando modpack ${modpack.modpackId}...`);
-}
-function handleUninstall(modpack: ModpackVersion) {
-    console.log(`Desinstalando modpack ${modpack.modpackId}...`);
-}
-function handleOpenFiles(modpack: ModpackVersion) {
-    console.log(`Abriendo archivos del modpack ${modpack.modpackId}...`);
-}
-function handleOpenSettings(modpack: ModpackVersion) {
-    console.log(`Abriendo ajustes del modpack ${modpack.modpackId}...`);
 }
 
 export default function ModpackDetailScreen() {
@@ -51,7 +44,8 @@ export default function ModpackDetailScreen() {
     const location = useLocation();
     const name = (location.state as { name?: string } | null)?.name;
     const { basePath, username } = useUser();
-
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [modpackSettings, setModpackSettings] = useState<ModpackSettings | null>(null);
     // Fetch modpack data
     useEffect(() => {
         const fetchData = async () => {
@@ -98,7 +92,13 @@ export default function ModpackDetailScreen() {
     useEffect(() => {
         return () => { unlistenRef.current?.(); };
     }, []);
-
+    useEffect(() => {
+        if (!modpack) return;
+        setModpackSettings(loadSettings(modpack.modpackId));
+    }, [modpack]);
+    function handleOpenSettings(modpack: ModpackVersion) {
+        setSettingsOpen(true);
+    }
     async function handleInstall(modpack: ModpackVersion) {
         if (!basePath) {
             console.error('basePath no disponible todavía');
@@ -155,10 +155,43 @@ export default function ModpackDetailScreen() {
         }
     }
 
+    async function handleOpenFiles(modpack: ModpackVersion) {
+        if (!basePath) return;
+        const instanceDir = `${basePath}/instances/${modpack.modpackId}`;
+        try {
+            await invoke('open_directory', { path: instanceDir });
+        } catch (err) {
+            console.error('Error abriendo directorio:', err);
+        }
+    }
+    async function handleUninstall(modpack: ModpackVersion) {
+        if (!basePath) return;
+
+        const confirmed = await ask(
+            `¿Seguro que quieres desinstalar ${name || modpack.modpackId}?\nSe eliminarán todos los archivos de la instancia.`,
+            { title: 'Desinstalar modpack', kind: 'warning' }
+        );
+
+        if (!confirmed) return;
+
+        try {
+            await invoke('uninstall_modpack', {
+                basePath,
+                modpackId: modpack.modpackId,
+            });
+            setIsInstalled(false);
+            console.log('Modpack desinstalado:', modpack.modpackId);
+        } catch (err) {
+            console.error('Error desinstalando:', err);
+            setLaunchError(`Error desinstalando: ${err}`);
+        }
+    }
+
     async function handlePlay(modpack: ModpackVersion) {
         if (!basePath) return;
         setLaunching(true);
         setLaunchError(null);
+        const s = modpackSettings;
         try {
             await invoke('launch_modpack', {
                 basePath,
@@ -166,9 +199,14 @@ export default function ModpackDetailScreen() {
                 mcVersion: modpack.minecraftVersion,
                 forgeVersion: modpack.forgeVersion,
                 username: username ?? 'Player',
+                minRamMb: s?.minRamMb ?? 512,
+                maxRamMb: s?.maxRamMb ?? 4096,
+                fullscreen: s?.fullscreen ?? false,
+                windowWidth: s?.windowWidth ?? 1280,
+                windowHeight: s?.windowHeight ?? 720,
+                extraJvmArgs: s?.extraJvmArgs ?? '',
             });
         } catch (err) {
-            console.error('Error al lanzar el modpack:', err);
             setLaunchError(`Error al lanzar: ${err}`);
         } finally {
             setLaunching(false);
@@ -219,164 +257,177 @@ export default function ModpackDetailScreen() {
         return 'Instalar';
     };
 
+
+
     return (
-        <div style={detail.screen(bgUrl)}>
-            <div style={detail.overlay} />
+        <>{settingsOpen && modpack && (
+            <ModpackSettingsModal
+                modpackId={modpack.modpackId}
+                modpackName={name || modpack.modpackId}
+                onClose={() => setSettingsOpen(false)}
+                onSave={(s) => setModpackSettings(s)}
+            />
+        )}
+            <div style={detail.screen(bgUrl)}>
+                <div style={detail.overlay} />
 
-            {/* ── Overlay de instalación ───────────────────────── */}
-            {installing && progress && (
-                <div style={installOverlay.wrap}>
-                    <div style={installOverlay.card}>
-                        <div style={installOverlay.header}>
-                            <span style={installOverlay.title}>Instalando modpack</span>
-                            <span style={installOverlay.step}>{progress.step}</span>
-                        </div>
-
-                        <div style={installOverlay.trackWrap}>
-                            <div style={installOverlay.trackRow}>
-                                <span style={{ fontSize: '12px', color: 'var(--text-faint)' }}>Progreso</span>
-                                <span style={installOverlay.percent}>{progress.percent}%</span>
+                {/* ── Overlay de instalación ───────────────────────── */}
+                {installing && progress && (
+                    <div style={installOverlay.wrap}>
+                        <div style={installOverlay.card}>
+                            <div style={installOverlay.header}>
+                                <span style={installOverlay.title}>Instalando modpack</span>
+                                <span style={installOverlay.step}>{progress.step}</span>
                             </div>
-                            <div style={installOverlay.track}>
-                                <div style={installOverlay.bar(progress.percent)} />
-                            </div>
-                        </div>
 
-                        {progress.mode === 'download' && (
-                            <>
-                                <div style={installOverlay.divider} />
-                                <div style={installOverlay.statsRow}>
-                                    <div style={installOverlay.stat}>
-                                        <span style={installOverlay.statLabel}>Descargado</span>
-                                        <span style={installOverlay.statValue}>
-                                            {formatBytes(progress.downloadedBytes ?? 0)}
-                                            {progress.totalBytes ? ` / ${formatBytes(progress.totalBytes)}` : ''}
-                                        </span>
-                                    </div>
-                                    <div style={installOverlay.stat}>
-                                        <span style={installOverlay.statLabel}>Velocidad</span>
-                                        <span style={installOverlay.statValue}>
-                                            {formatSpeed(progress.speedBps ?? 0)}
-                                        </span>
-                                    </div>
-                                    {progress.totalBytes && (
+                            <div style={installOverlay.trackWrap}>
+                                <div style={installOverlay.trackRow}>
+                                    <span style={{ fontSize: '12px', color: 'var(--text-faint)' }}>Progreso</span>
+                                    <span style={installOverlay.percent}>{progress.percent}%</span>
+                                </div>
+                                <div style={installOverlay.track}>
+                                    <div style={installOverlay.bar(progress.percent)} />
+                                </div>
+                            </div>
+
+                            {progress.mode === 'download' && (
+                                <>
+                                    <div style={installOverlay.divider} />
+                                    <div style={installOverlay.statsRow}>
                                         <div style={installOverlay.stat}>
-                                            <span style={installOverlay.statLabel}>Restante</span>
+                                            <span style={installOverlay.statLabel}>Descargado</span>
                                             <span style={installOverlay.statValue}>
-                                                {formatBytes(progress.totalBytes - (progress.downloadedBytes ?? 0))}
+                                                {formatBytes(progress.downloadedBytes ?? 0)}
+                                                {progress.totalBytes ? ` / ${formatBytes(progress.totalBytes)}` : ''}
                                             </span>
                                         </div>
-                                    )}
-                                </div>
-                            </>
-                        )}
+                                        <div style={installOverlay.stat}>
+                                            <span style={installOverlay.statLabel}>Velocidad</span>
+                                            <span style={installOverlay.statValue}>
+                                                {formatSpeed(progress.speedBps ?? 0)}
+                                            </span>
+                                        </div>
+                                        {progress.totalBytes && (
+                                            <div style={installOverlay.stat}>
+                                                <span style={installOverlay.statLabel}>Restante</span>
+                                                <span style={installOverlay.statValue}>
+                                                    {formatBytes(progress.totalBytes - (progress.downloadedBytes ?? 0))}
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
+                            )}
 
-                        {progress.mode === 'extract' && (
-                            <>
-                                <div style={installOverlay.divider} />
-                                <div style={installOverlay.statsRow}>
-                                    <div style={installOverlay.stat}>
-                                        <span style={installOverlay.statLabel}>Archivos</span>
-                                        <span style={installOverlay.statValue}>
-                                            {progress.extractedFiles ?? 0} / {progress.totalFiles ?? 0}
-                                        </span>
+                            {progress.mode === 'extract' && (
+                                <>
+                                    <div style={installOverlay.divider} />
+                                    <div style={installOverlay.statsRow}>
+                                        <div style={installOverlay.stat}>
+                                            <span style={installOverlay.statLabel}>Archivos</span>
+                                            <span style={installOverlay.statValue}>
+                                                {progress.extractedFiles ?? 0} / {progress.totalFiles ?? 0}
+                                            </span>
+                                        </div>
+                                        <div style={installOverlay.stat}>
+                                            <span style={installOverlay.statLabel}>Velocidad</span>
+                                            <span style={installOverlay.statValue}>
+                                                {(progress.speedFps ?? 0).toFixed(1)} arch/s
+                                            </span>
+                                        </div>
+                                        <div style={installOverlay.stat}>
+                                            <span style={installOverlay.statLabel}>Restantes</span>
+                                            <span style={installOverlay.statValue}>
+                                                {(progress.totalFiles ?? 0) - (progress.extractedFiles ?? 0)}
+                                            </span>
+                                        </div>
                                     </div>
-                                    <div style={installOverlay.stat}>
-                                        <span style={installOverlay.statLabel}>Velocidad</span>
-                                        <span style={installOverlay.statValue}>
-                                            {(progress.speedFps ?? 0).toFixed(1)} arch/s
-                                        </span>
-                                    </div>
-                                    <div style={installOverlay.stat}>
-                                        <span style={installOverlay.statLabel}>Restantes</span>
-                                        <span style={installOverlay.statValue}>
-                                            {(progress.totalFiles ?? 0) - (progress.extractedFiles ?? 0)}
-                                        </span>
-                                    </div>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            <div style={detail.content}>
-                <div style={detail.infoRow}>
-                    <div style={detail.textCol}>
-                        <h1 style={detail.title}>{name || modpack.modpackId}</h1>
-                        <div style={detail.metaRow}>
-                            <span style={detail.metaTag}>MC {modpack.minecraftVersion}</span>
-                            <span style={detail.metaTag}>Forge {modpack.forgeVersion}</span>
+                                </>
+                            )}
                         </div>
-                        {launchError && (
-                            <span style={{
-                                fontSize: '12px',
-                                color: 'var(--error-text)',
-                                marginTop: '6px',
-                                maxWidth: '480px',
-                                wordBreak: 'break-word',
-                            }}>
-                                {launchError}
-                            </span>
-                        )}
                     </div>
 
-                    <div style={detail.actionsCol}>
-                        <button
-                            style={{
-                                ...detail.playButton,
-                                opacity: isBusy || !basePath ? 0.5 : 1,
-                                cursor: isBusy || !basePath ? 'not-allowed' : 'pointer',
-                            }}
-                            disabled={isBusy || !basePath}
-                            onClick={() => isInstalled ? handlePlay(modpack) : handleInstall(modpack)}
-                        >
-                            {playButtonLabel()}
-                        </button>
+                )
+                }
 
-                        <div style={detail.menuWrap} ref={menuRef}>
+                <div style={detail.content}>
+                    <div style={detail.infoRow}>
+                        <div style={detail.textCol}>
+                            <h1 style={detail.title}>{name || modpack.modpackId}</h1>
+                            <div style={detail.metaRow}>
+                                <span style={detail.metaTag}>MC {modpack.minecraftVersion}</span>
+                                <span style={detail.metaTag}>Forge {modpack.forgeVersion}</span>
+                            </div>
+                            {launchError && (
+                                <span style={{
+                                    fontSize: '12px',
+                                    color: 'var(--error-text)',
+                                    marginTop: '6px',
+                                    maxWidth: '480px',
+                                    wordBreak: 'break-word',
+                                }}>
+                                    {launchError}
+                                </span>
+                            )}
+                        </div>
+
+                        <div style={detail.actionsCol}>
                             <button
-                                style={{ ...detail.menuButton, ...(menuOpen ? detail.menuButtonHover : {}) }}
-                                onClick={() => setMenuOpen((v) => !v)}
-                                aria-label="Más opciones"
-                                disabled={isBusy}
+                                style={{
+                                    ...detail.playButton,
+                                    opacity: isBusy || !basePath ? 0.5 : 1,
+                                    cursor: isBusy || !basePath ? 'not-allowed' : 'pointer',
+                                }}
+                                disabled={isBusy || !basePath}
+                                onClick={() => isInstalled ? handlePlay(modpack) : handleInstall(modpack)}
                             >
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                                    <circle cx="12" cy="5" r="2" />
-                                    <circle cx="12" cy="12" r="2" />
-                                    <circle cx="12" cy="19" r="2" />
-                                </svg>
+                                {playButtonLabel()}
                             </button>
 
-                            {menuOpen && (
-                                <div style={detail.dropdown}>
-                                    {menuItems.map((menuItem, idx) => {
-                                        const disabled = menuItem.requiresInstall && !isInstalled;
-                                        return (
-                                            <div key={menuItem.id}>
-                                                <div
-                                                    style={detail.dropdownItem(menuHoverId === menuItem.id, menuItem.danger, disabled)}
-                                                    onMouseEnter={() => !disabled && setMenuHoverId(menuItem.id)}
-                                                    onMouseLeave={() => setMenuHoverId(null)}
-                                                    onClick={() => {
-                                                        if (disabled) return;
-                                                        menuItem.onClick();
-                                                        setMenuOpen(false);
-                                                    }}
-                                                >
-                                                    <span style={detail.dropdownIcon}>{menuItem.icon}</span>
-                                                    {menuItem.label}
+                            <div style={detail.menuWrap} ref={menuRef}>
+                                <button
+                                    style={{ ...detail.menuButton, ...(menuOpen ? detail.menuButtonHover : {}) }}
+                                    onClick={() => setMenuOpen((v) => !v)}
+                                    aria-label="Más opciones"
+                                    disabled={isBusy}
+                                >
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                        <circle cx="12" cy="5" r="2" />
+                                        <circle cx="12" cy="12" r="2" />
+                                        <circle cx="12" cy="19" r="2" />
+                                    </svg>
+                                </button>
+
+                                {menuOpen && (
+                                    <div style={detail.dropdown}>
+                                        {menuItems.map((menuItem, idx) => {
+                                            const disabled = menuItem.requiresInstall && !isInstalled;
+                                            return (
+                                                <div key={menuItem.id}>
+                                                    <div
+                                                        style={detail.dropdownItem(menuHoverId === menuItem.id, menuItem.danger, disabled)}
+                                                        onMouseEnter={() => !disabled && setMenuHoverId(menuItem.id)}
+                                                        onMouseLeave={() => setMenuHoverId(null)}
+                                                        onClick={() => {
+                                                            if (disabled) return;
+                                                            menuItem.onClick();
+                                                            setMenuOpen(false);
+                                                        }}
+                                                    >
+                                                        <span style={detail.dropdownIcon}>{menuItem.icon}</span>
+                                                        {menuItem.label}
+                                                    </div>
+                                                    {idx === 0 && <div style={detail.dropdownDivider} />}
                                                 </div>
-                                                {idx === 0 && <div style={detail.dropdownDivider} />}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
+        </>
     );
 }

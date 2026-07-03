@@ -4,25 +4,68 @@ import { fetchModpackIndex } from "../repositories/ModpackRepository";
 import { navbar, item, settings } from "../styles/navbarStyles";
 import { useLocation, useNavigate } from "react-router-dom";
 
+function NavbarSkeleton({ expanded }: { expanded: boolean }) {
+    return (
+        <>
+            {[1, 2, 3].map((i) => (
+                <div
+                    key={i}
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        padding: '6px 12px',
+                        width: '100%',
+                        boxSizing: 'border-box' as const,
+                    }}
+                >
+                    <div style={{
+                        width: '40px',
+                        height: '40px',
+                        borderRadius: 'var(--radius-lg)',
+                        backgroundColor: 'var(--bg-hover)',
+                        flexShrink: 0,
+                        animation: 'pulse 1.4s ease-in-out infinite',
+                        animationDelay: `${i * 0.15}s`,
+                    }} />
+                    <div style={{
+                        height: '12px',
+                        borderRadius: 'var(--radius-sm)',
+                        backgroundColor: 'var(--bg-hover)',
+                        width: expanded ? '120px' : 0,
+                        overflow: 'hidden',
+                        animation: 'pulse 1.4s ease-in-out infinite',
+                        animationDelay: `${i * 0.15}s`,
+                        transition: 'width 0.2s',
+                    }} />
+                </div>
+            ))}
+        </>
+    );
+}
+
 export default function NavbarComponent() {
     const [modpacks, setModpacks] = useState<ModpackEntry[]>([]);
-
+    const [loading, setLoading] = useState(true);
     const [expanded, setExpanded] = useState(false);
     const [hoveredId, setHoveredId] = useState<string | null>(null);
     const [settingsHovered, setSettingsHovered] = useState(false);
     const navigate = useNavigate();
     const location = useLocation();
 
-
-
     useEffect(() => {
         const fetchData = async () => {
-            const modpacksData: ModpackIndex = await fetchModpackIndex();
-            setModpacks(modpacksData.modpacks);
+            try {
+                const modpacksData: ModpackIndex = await fetchModpackIndex();
+                setModpacks(modpacksData.modpacks);
+            } catch (e) {
+                console.error('Error cargando modpacks:', e);
+            } finally {
+                setLoading(false);
+            }
         };
         fetchData();
     }, []);
-
 
     return (
         <nav
@@ -31,21 +74,40 @@ export default function NavbarComponent() {
             onMouseLeave={() => setExpanded(false)}
         >
             <div style={navbar.list}>
-                {modpacks.map((modpack: ModpackEntry) => {
-                    const isActive = location.pathname === `/modpacks/${modpack.id}`;
-                    return (
-                        <a
-                            key={modpack.id}
-                            onClick={isActive ? () => { navigate('') } : () => navigate(`/modpacks/${modpack.id}`, { state: { name: modpack.name } })}
-                            style={item.link(hoveredId === modpack.id, isActive)}
-                            onMouseEnter={() => setHoveredId(modpack.id)}
-                            onMouseLeave={() => setHoveredId(null)}
-                        >
-                            <img src={modpack.imageUrl} alt={modpack.name} style={item.thumb(isActive)} />
-                            <span style={item.name(expanded, isActive)}>{modpack.name}</span>
-                        </a>
-                    );
-                })}
+                {loading ? (
+                    <NavbarSkeleton expanded={expanded} />
+                ) : modpacks.length === 0 ? (
+                    // Sin modpacks: mostrar un guión centrado
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: '12px',
+                        color: 'var(--text-faint)',
+                        fontSize: '18px',
+                    }}>
+                        —
+                    </div>
+                ) : (
+                    modpacks.map((modpack: ModpackEntry) => {
+                        const isActive = location.pathname === `/modpacks/${modpack.id}`;
+                        return (
+                            <a
+                                key={modpack.id}
+                                onClick={isActive
+                                    ? () => navigate('')
+                                    : () => navigate(`/modpacks/${modpack.id}`, { state: { name: modpack.name } })
+                                }
+                                style={item.link(hoveredId === modpack.id, isActive)}
+                                onMouseEnter={() => setHoveredId(modpack.id)}
+                                onMouseLeave={() => setHoveredId(null)}
+                            >
+                                <img src={modpack.imageUrl} alt={modpack.name} style={item.thumb(isActive)} />
+                                <span style={item.name(expanded, isActive)}>{modpack.name}</span>
+                            </a>
+                        );
+                    })
+                )}
             </div>
 
             <div

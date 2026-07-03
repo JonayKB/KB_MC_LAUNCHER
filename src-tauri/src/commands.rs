@@ -2,6 +2,18 @@ use tauri::AppHandle;
 use tauri::Manager;
 use crate::installer;
 use std::path::Path;
+use crate::launcher::{launch, LaunchSettings};
+use crate::installer::sysinfo::{get_system_info, recommend_settings, RecommendedSettings};
+#[tauri::command]
+pub fn get_recommended_settings() -> RecommendedSettings {
+    let info = get_system_info();
+    let rec  = recommend_settings(&info);
+    log::info!(
+        "[commands::get_recommended_settings] min:{}MB max:{}MB",
+        rec.min_ram_mb, rec.max_ram_mb
+    );
+    rec
+}
 #[tauri::command]
 pub async fn fetch_text(url: String) -> Result<String, String> {
     reqwest::get(&url)
@@ -67,8 +79,81 @@ pub async fn launch_modpack(
     mc_version: String,
     forge_version: String,
     username: String,
+    min_ram_mb: Option<u32>,
+    max_ram_mb: Option<u32>,
+    fullscreen: Option<bool>,
+    window_width: Option<u32>,
+    window_height: Option<u32>,
+    extra_jvm_args: Option<String>,
 ) -> Result<(), String> {
-    crate::launcher::launch(base_path, modpack_id, mc_version, forge_version, username)
+    let settings = LaunchSettings {
+        min_ram_mb:     min_ram_mb.unwrap_or(512),
+        max_ram_mb:     max_ram_mb.unwrap_or(4096),
+        fullscreen:     fullscreen.unwrap_or(false),
+        window_width:   window_width.unwrap_or(1280),
+        window_height:  window_height.unwrap_or(720),
+        extra_jvm_args: extra_jvm_args.unwrap_or_default(),
+    };
+
+    launch(base_path, modpack_id, mc_version, forge_version, username, settings)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn open_directory(path: String) -> Result<(), String> {
+    log::info!("[commands::open_directory] Abriendo: {}", path);
+
+    let dir = std::path::Path::new(&path);
+
+    if !dir.exists() {
+        log::warn!("[commands::open_directory] Directorio no existe: {}", path);
+        return Err(format!("El directorio no existe: {}", path));
+    }
+
+    #[cfg(target_os = "windows")]
+    let result = tokio::process::Command::new("explorer")
+        .arg(&path)
+        .spawn();
+
+    #[cfg(target_os = "linux")]
+    let result = tokio::process::Command::new("xdg-open")
+        .arg(&path)
+        .spawn();
+
+    match result {
+        Ok(_) => {
+            log::info!("[commands::open_directory] ✓ Abierto: {}", path);
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("[commands::open_directory] Error abriendo {}: {}", path, e);
+            Err(format!("No se pudo abrir el directorio: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn uninstall_modpack(
+    base_path: String,
+    modpack_id: String,
+) -> Result<(), String> {
+    log::info!("[commands::uninstall_modpack] Desinstalando: {}", modpack_id);
+
+    let base         = std::path::Path::new(&base_path);
+    let instance_dir = base.join("instances").join(&modpack_id);
+
+    if !instance_dir.exists() {
+        log::warn!("[commands::uninstall_modpack] Instancia no encontrada: {:?}", instance_dir);
+        return Err(format!("El modpack '{}' no está instalado", modpack_id));
+    }
+
+    tokio::fs::remove_dir_all(&instance_dir).await
+        .map_err(|e| {
+            log::error!("[commands::uninstall_modpack] Error eliminando {:?}: {}", instance_dir, e);
+            format!("Error desinstalando el modpack: {}", e)
+        })?;
+
+    log::info!("[commands::uninstall_modpack] ✓ Instancia eliminada: {:?}", instance_dir);
+    Ok(())
 }
