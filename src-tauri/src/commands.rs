@@ -111,10 +111,14 @@ pub async fn open_directory(path: String) -> Result<(), String> {
         return Err(format!("El directorio no existe: {}", path));
     }
 
-    #[cfg(target_os = "windows")]
-    let result = tokio::process::Command::new("explorer")
-        .arg(&path)
-        .spawn();
+        #[cfg(target_os = "windows")]
+    let result = {
+        let win_path = path.replace('/', "\\");
+        log::info!("[commands::open_directory] win_path: {}", win_path);
+        tokio::process::Command::new("explorer")
+            .arg(&win_path)
+            .spawn()
+    };
 
     #[cfg(target_os = "linux")]
     let result = tokio::process::Command::new("xdg-open")
