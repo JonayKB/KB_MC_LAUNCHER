@@ -9,6 +9,7 @@ interface UserContextValue {
     isSetupDone: boolean;
     resetSetup: () => void;
     basePath: string | null; // null mientras no se haya cargado desde Rust
+    isLoading: boolean; // true mientras se carga desde localStorage
 }
 
 const UserContext = createContext<UserContextValue>({
@@ -19,6 +20,7 @@ const UserContext = createContext<UserContextValue>({
     isSetupDone: false,
     resetSetup: () => { },
     basePath: null,
+    isLoading: true,
 });
 
 export function useUser() {
@@ -36,6 +38,7 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
     const [hasMinecraftOwned, setHasMinecraftOwnedState] = useState<boolean | null>(null);
     const [username, setUsernameState] = useState<string | undefined>(undefined);
     const [basePath, setBasePath] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
 
     // Cargar usuario persistido
     useEffect(() => {
@@ -47,6 +50,7 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
                 setUsernameState(data.username);
             }
         } catch { }
+        setIsLoading(false);
     }, []);
 
     // Obtener basePath desde Rust
@@ -89,6 +93,7 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
             isSetupDone,
             resetSetup,
             basePath,
+            isLoading,
         }}>
             {children}
         </UserContext.Provider>

@@ -9,8 +9,8 @@ pub fn get_recommended_settings() -> RecommendedSettings {
     let info = get_system_info();
     let rec  = recommend_settings(&info);
     log::info!(
-        "[commands::get_recommended_settings] min:{}MB max:{}MB",
-        rec.min_ram_mb, rec.max_ram_mb
+        "[commands::get_recommended_settings] min:{}MB max:{}MB, Argumentos recomendados: {:?}",
+        rec.min_ram_mb, rec.max_ram_mb, rec.extra_jvm_args
     );
     rec
 }
@@ -156,4 +156,27 @@ pub async fn uninstall_modpack(
 
     log::info!("[commands::uninstall_modpack] ✓ Instancia eliminada: {:?}", instance_dir);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn clear_all_cache(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+
+    log::info!("[commands::clear_all_cache] Borrando: {:?}", base);
+
+    for folder in &["instances", "versions", "libraries", "assets", "java"] {
+        let path = base.join(folder);
+        if path.exists() {
+            tokio::fs::remove_dir_all(&path).await
+                .map_err(|e| format!("Error borrando {}: {}", folder, e))?;
+            log::info!("[commands::clear_all_cache] Eliminado: {:?}", path);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
+    app.restart();
 }

@@ -202,15 +202,15 @@ export const loading = {
 
 export const installOverlay = {
     wrap: {
-        position: 'absolute',
-        inset: 0,
-        background: 'rgba(8,8,9,0.85)',
-        backdropFilter: 'blur(6px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 10,
-    } as S,
+    position: 'fixed', 
+    inset: 0,
+    background: 'rgba(8,8,9,0.85)',
+    backdropFilter: 'blur(6px)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 150,      
+  } as S,
 
     card: {
         width: '100%',

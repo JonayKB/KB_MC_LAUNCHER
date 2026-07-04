@@ -17,47 +17,53 @@ pub struct RecommendedSettings {
 
 
 pub fn get_system_info() -> SystemInfo {
-    let total_ram_mb = get_total_ram_mb();
-    let cpu_cores    = num_cpus::get();
-    let os           = std::env::consts::OS.to_string();
+    let raw_ram_mb   = get_total_ram_mb();
+    let total_ram_mb = ((raw_ram_mb + 512) / 1024) * 1024;
+
+    let cpu_cores = num_cpus::get();
+    let os        = std::env::consts::OS.to_string();
 
     log::info!(
-        "[sysinfo] RAM total: {} MB | Cores: {} | OS: {}",
-        total_ram_mb, cpu_cores, os
+        "[sysinfo] RAM física: {}MB → redondeada: {}MB | Cores: {} | OS: {}",
+        raw_ram_mb, total_ram_mb, cpu_cores, os
     );
 
     SystemInfo { total_ram_mb, cpu_cores, os }
 }
-
 pub fn recommend_settings(info: &SystemInfo) -> RecommendedSettings {
-    // ── RAM ───────────────────────────────────────────────────
-    // Reservamos al menos 2 GB para el OS, el resto disponible para Minecraft
-    let available_for_mc = info.total_ram_mb.saturating_sub(2048);
+    let total = info.total_ram_mb;
 
-    // Max RAM: 50% de la RAM total, mínimo 2GB, máximo 16GB
-    let max_ram_mb = (available_for_mc / 2)
+    // Max RAM: 50% de la RAM total directamente
+    // Mínimo 2GB, máximo 16GB
+    let max_ram_mb = (total / 2)
         .max(2048)
         .min(16384) as u32;
+
+    if total.saturating_sub(max_ram_mb as u64) < 2048 {
+        log::warn!(
+            "[sysinfo] RAM máxima recomendada ({} MB) deja menos de 2GB para el OS",
+            max_ram_mb
+        );
+    }
 
     // Min RAM: 25% del max, mínimo 512MB
     let min_ram_mb = (max_ram_mb / 4).max(512);
 
     log::info!(
-        "[sysinfo] RAM recomendada: min {}MB, max {}MB (RAM total: {}MB)",
-        min_ram_mb, max_ram_mb, info.total_ram_mb
+        "[sysinfo] RAM recomendada: min {}MB max {}MB (total: {}MB)",
+        min_ram_mb, max_ram_mb, total
     );
 
-    // ── JVM args según hardware ───────────────────────────────
+    // ── GC según RAM ──────────────────────────────────────────
     let mut args: Vec<String> = Vec::new();
 
-    // GC según RAM disponible
-    if max_ram_mb >= 8192 {
-        // Mucha RAM: ZGC es mejor para modpacks pesados (Forge 1.20+)
+    if max_ram_mb >= 7680 {
+        // 16GB+ → ZGC generacional, mínimas pausas
         args.push("-XX:+UseZGC".to_string());
         args.push("-XX:+ZGenerational".to_string());
-        log::info!("[sysinfo] GC: ZGC (RAM alta)");
+        log::info!("[sysinfo] GC: ZGC generacional (max RAM >= 8GB)");
     } else if max_ram_mb >= 4096 {
-        // RAM media: G1GC con ajuste fino
+        // 8GB → G1GC ajustado
         args.push("-XX:+UseG1GC".to_string());
         args.push("-XX:+ParallelRefProcEnabled".to_string());
         args.push("-XX:MaxGCPauseMillis=200".to_string());
@@ -71,43 +77,40 @@ pub fn recommend_settings(info: &SystemInfo) -> RecommendedSettings {
         args.push("-XX:G1MixedGCLiveThresholdPercent=90".to_string());
         args.push("-XX:G1RSetUpdatingPauseTimePercent=5".to_string());
         args.push("-XX:SurvivorRatio=32".to_string());
-        log::info!("[sysinfo] GC: G1GC ajustado (RAM media)");
+        log::info!("[sysinfo] GC: G1GC ajustado (max RAM 4-8GB)");
     } else {
-        // RAM baja: G1GC básico
+        // < 4GB → G1GC básico
         args.push("-XX:+UseG1GC".to_string());
         args.push("-XX:MaxGCPauseMillis=200".to_string());
-        log::info!("[sysinfo] GC: G1GC básico (RAM baja)");
+        log::info!("[sysinfo] GC: G1GC básico (max RAM < 4GB)");
     }
 
-    // Optimizaciones de compilación JIT según cores
+    // ── Threads según cores ───────────────────────────────────
     if info.cpu_cores >= 8 {
         args.push(format!("-XX:ConcGCThreads={}", info.cpu_cores / 4));
         args.push(format!("-XX:ParallelGCThreads={}", info.cpu_cores / 2));
         args.push("-XX:+UseStringDeduplication".to_string());
-        log::info!("[sysinfo] Threads GC: {}/{}", info.cpu_cores / 4, info.cpu_cores / 2);
     } else if info.cpu_cores >= 4 {
         args.push("-XX:ConcGCThreads=2".to_string());
         args.push("-XX:ParallelGCThreads=2".to_string());
     }
 
-    // Optimizaciones generales siempre útiles
+    // ── Optimizaciones generales ──────────────────────────────
     args.push("-XX:+DisableExplicitGC".to_string());
     args.push("-XX:AllocatePrefetchStyle=1".to_string());
     args.push("-Dfml.readTimeout=120".to_string());
     args.push("-Dfml.loginTimeout=120".to_string());
 
-    // Ajuste de memoria NIO (evita OOM en modpacks con muchos recursos)
     let nio_size = if max_ram_mb >= 8192 { 512 } else { 256 };
     args.push(format!("-XX:MaxDirectMemorySize={}M", nio_size));
 
-    let extra_jvm_args = args.join(" ");
-    log::info!("[sysinfo] Args recomendados generados ({} args)", args.len());
+    log::info!("[sysinfo] {} args JVM generados", args.len());
 
     RecommendedSettings {
         min_ram_mb,
         max_ram_mb,
-        extra_jvm_args,
-        total_ram_mb: info.total_ram_mb, 
+        extra_jvm_args: args.join(" "),
+        total_ram_mb: total,
     }
 
 }

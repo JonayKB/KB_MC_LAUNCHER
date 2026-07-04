@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ModpackSettings, DEFAULT_SETTINGS, RESOLUTIONS } from '../types/modpackSettings';
 import { modal } from '../types/modackSettingStyles';
 import { invoke } from '@tauri-apps/api/core';
+import { CustomDropdown } from './CustomDropdown';
 
 const SETTINGS_KEY = (modpackId: string) => `kb_settings_${modpackId}`;
 
@@ -59,7 +60,7 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
     }, []);
 
     // Rango del slider: 25% de la RAM total → 100% de la RAM total
-    const sliderMin = Math.max(512, snapTo256(totalRamMb * 0.25));
+    const sliderMin = Math.max(512, snapTo256(totalRamMb * 0.05));
     const sliderMax = snapTo256(totalRamMb);
 
     function applyRecommended() {
@@ -68,7 +69,7 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
             ...prev,
             minRamMb: recommended.min_ram_mb,
             maxRamMb: recommended.max_ram_mb,
-            // NO tocamos extraJvmArgs aquí — el usuario los gestiona aparte
+            extraJvmArgs: recommended.extra_jvm_args,
         }));
     }
 
@@ -81,14 +82,15 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
         setSettings(prev => ({ ...prev, [key]: value }));
     }
 
-    function handleResolutionChange(e: React.ChangeEvent<HTMLSelectElement>) {
-        const idx = Number(e.target.value);
-        const preset = RESOLUTIONS[idx];
-        if (preset.width !== 0) {
-            set('windowWidth', preset.width);
-            set('windowHeight', preset.height);
-        }
+ function handleResolutionChange(idx: number) {
+    const preset = RESOLUTIONS[idx];
+    if (preset.width !== 0) {
+        set('windowWidth', preset.width);
+        set('windowHeight', preset.height);
+    } else {
+        setSettings(prev => ({ ...prev }));
     }
+}
 
     function handleSave() {
         saveSettings(modpackId, settings);
@@ -284,45 +286,41 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
                         </div>
 
                         {!settings.fullscreen && (
-                            <>
-                                <select
-                                    style={modal.select}
-                                    value={
-                                        RESOLUTIONS.findIndex(r => r.width === settings.windowWidth && r.height === settings.windowHeight) === -1
-                                            ? RESOLUTIONS.length - 1
-                                            : RESOLUTIONS.findIndex(r => r.width === settings.windowWidth && r.height === settings.windowHeight)
-                                    }
-                                    onChange={handleResolutionChange}
-                                >
-                                    {RESOLUTIONS.map((r, idx) => (
-                                        <option key={idx} value={idx}>{r.label}</option>
-                                    ))}
-                                </select>
+    <>
+        <CustomDropdown
+            options={RESOLUTIONS.map((r, idx) => ({ label: r.label, value: idx }))}
+            value={
+                RESOLUTIONS.findIndex(r => r.width === settings.windowWidth && r.height === settings.windowHeight) === -1
+                    ? RESOLUTIONS.length - 1
+                    : RESOLUTIONS.findIndex(r => r.width === settings.windowWidth && r.height === settings.windowHeight)
+            }
+            onChange={handleResolutionChange}
+        />
 
-                                {isCustomRes && (
-                                    <div style={modal.customResRow}>
-                                        <input
-                                            type="number"
-                                            style={modal.customInput}
-                                            value={settings.windowWidth}
-                                            min={640} max={7680}
-                                            onChange={e => set('windowWidth', Number(e.target.value))}
-                                            placeholder="1280"
-                                        />
-                                        <span style={modal.customSep}>×</span>
-                                        <input
-                                            type="number"
-                                            style={modal.customInput}
-                                            value={settings.windowHeight}
-                                            min={360} max={4320}
-                                            onChange={e => set('windowHeight', Number(e.target.value))}
-                                            placeholder="720"
-                                        />
-                                        <span style={{ fontSize: '12px', color: 'var(--text-faint)' }}>px</span>
-                                    </div>
-                                )}
-                            </>
-                        )}
+        {isCustomRes && (
+            <div style={modal.customResRow}>
+                <input
+                    type="number"
+                    style={modal.customInput}
+                    value={settings.windowWidth}
+                    min={640} max={7680}
+                    onChange={e => set('windowWidth', Number(e.target.value))}
+                    placeholder="1280"
+                />
+                <span style={modal.customSep}>×</span>
+                <input
+                    type="number"
+                    style={modal.customInput}
+                    value={settings.windowHeight}
+                    min={360} max={4320}
+                    onChange={e => set('windowHeight', Number(e.target.value))}
+                    placeholder="720"
+                />
+                <span style={{ fontSize: '12px', color: 'var(--text-faint)' }}>px</span>
+            </div>
+        )}
+    </>
+)}
                     </div>
 
                     <div style={modal.divider} />

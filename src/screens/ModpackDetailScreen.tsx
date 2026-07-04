@@ -9,7 +9,7 @@ import { formatBytes, formatSpeed, InstallProgress } from "../types/installer";
 import { useUser } from "../context/UserContext";
 import { ask } from '@tauri-apps/plugin-dialog';
 import { ModpackSettings } from "../types/modpackSettings";
-import ModpackSettingsModal, { loadSettings } from "../components/ModpackSettignsModal";
+import ModpackSettingsModal, { loadSettings } from "../components/ModpackSettingsModal";
 const IMAGE_ROTATE_MS = 6000;
 
 interface ProgressState {

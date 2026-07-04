@@ -3,7 +3,7 @@ import { ModpackEntry, ModpackIndex } from "../types";
 import { fetchModpackIndex } from "../repositories/ModpackRepository";
 import { navbar, item, settings } from "../styles/navbarStyles";
 import { useLocation, useNavigate } from "react-router-dom";
-
+import AppSettingsModal from './AppSettingsModal';
 function NavbarSkeleton({ expanded }: { expanded: boolean }) {
     return (
         <>
@@ -52,7 +52,7 @@ export default function NavbarComponent() {
     const [settingsHovered, setSettingsHovered] = useState(false);
     const navigate = useNavigate();
     const location = useLocation();
-
+const [settingsOpen, setSettingsOpen] = useState(false);
     useEffect(() => {
         const fetchData = async () => {
             try {
@@ -114,7 +114,7 @@ export default function NavbarComponent() {
                 style={settings.wrap(settingsHovered)}
                 onMouseEnter={() => setSettingsHovered(true)}
                 onMouseLeave={() => setSettingsHovered(false)}
-                onClick={() => navigate('/settings')}
+                onClick={() => setSettingsOpen(true)}
             >
                 <span style={settings.icon}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -124,6 +124,9 @@ export default function NavbarComponent() {
                 </span>
                 <span style={settings.label(expanded)}>Ajustes</span>
             </div>
+            {settingsOpen && (
+    <AppSettingsModal onClose={() => setSettingsOpen(false)} />
+)}
         </nav>
     );
 }
