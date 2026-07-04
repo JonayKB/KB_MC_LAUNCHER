@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { UserProvider, useUser } from './context/UserContext';
 import UpdateChecker from './screens/UpdateCheckerScreen';
 import SetupScreen from './screens/SetupScreen';
@@ -10,22 +10,25 @@ type AppStep = 'update' | 'setup' | 'app';
 
 function AppContent() {
     const { isSetupDone, isLoading } = useUser();
-
-    // Empezar siempre por el checker de updates — es rápido y necesario
     const [step, setStep] = useState<AppStep>('update');
 
+    const isSetupDoneRef = useRef(isSetupDone);
+    isSetupDoneRef.current = isSetupDone;
+
+
     const handleUpdateComplete = useCallback(() => {
-        // Después de updates, decidir a dónde ir
-        if (isSetupDone) {
-            setStep('app');   // ← faltaba este caso
+
+        if (isSetupDoneRef.current) {
+            setStep('app');
         } else {
             setStep('setup');
         }
-    }, [isSetupDone]);
+    }, []);
 
-    // Mientras el contexto carga desde localStorage, no renderizar nada
-    // Evita el flash del setup screen
-    if (isLoading) return null;
+
+    if (isLoading) {
+        return null;
+    }
 
     return (
         <div className="app">

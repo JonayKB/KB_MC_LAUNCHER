@@ -58,42 +58,43 @@ pub fn recommend_settings(info: &SystemInfo) -> RecommendedSettings {
     let mut args: Vec<String> = Vec::new();
 
     if max_ram_mb >= 7680 {
-        // 16GB+ → ZGC generacional, mínimas pausas
-        args.push("-XX:+UseZGC".to_string());
-        args.push("-XX:+ZGenerational".to_string());
-        log::info!("[sysinfo] GC: ZGC generacional (max RAM >= 8GB)");
-    } else if max_ram_mb >= 4096 {
-        // 8GB → G1GC ajustado
-        args.push("-XX:+UseG1GC".to_string());
-        args.push("-XX:+ParallelRefProcEnabled".to_string());
-        args.push("-XX:MaxGCPauseMillis=200".to_string());
-        args.push("-XX:+UnlockExperimentalVMOptions".to_string());
-        args.push("-XX:G1NewSizePercent=20".to_string());
-        args.push("-XX:G1ReservePercent=20".to_string());
-        args.push("-XX:G1HeapRegionSize=32M".to_string());
-        args.push("-XX:G1HeapWastePercent=5".to_string());
-        args.push("-XX:G1MixedGCCountTarget=4".to_string());
-        args.push("-XX:InitiatingHeapOccupancyPercent=15".to_string());
-        args.push("-XX:G1MixedGCLiveThresholdPercent=90".to_string());
-        args.push("-XX:G1RSetUpdatingPauseTimePercent=5".to_string());
-        args.push("-XX:SurvivorRatio=32".to_string());
-        log::info!("[sysinfo] GC: G1GC ajustado (max RAM 4-8GB)");
-    } else {
-        // < 4GB → G1GC básico
-        args.push("-XX:+UseG1GC".to_string());
-        args.push("-XX:MaxGCPauseMillis=200".to_string());
-        log::info!("[sysinfo] GC: G1GC básico (max RAM < 4GB)");
-    }
+    // ZGC — desde Java 21 es generacional por defecto, no necesita flag extra
+    args.push("-XX:+UseZGC".to_string());
+    // ZGenerational eliminado en Java 24, no añadirlo
+    // UseStringDeduplication no compatible con ZGC, no añadirlo
+    log::info!("[sysinfo] GC: ZGC (max RAM >= 7680MB, ~16GB físicos)");
+} else if max_ram_mb >= 3840 {
+    args.push("-XX:+UseG1GC".to_string());
+    args.push("-XX:+ParallelRefProcEnabled".to_string());
+    args.push("-XX:MaxGCPauseMillis=200".to_string());
+    args.push("-XX:+UnlockExperimentalVMOptions".to_string());
+    args.push("-XX:G1NewSizePercent=20".to_string());
+    args.push("-XX:G1ReservePercent=20".to_string());
+    args.push("-XX:G1HeapRegionSize=32M".to_string());
+    args.push("-XX:G1HeapWastePercent=5".to_string());
+    args.push("-XX:G1MixedGCCountTarget=4".to_string());
+    args.push("-XX:InitiatingHeapOccupancyPercent=15".to_string());
+    args.push("-XX:G1MixedGCLiveThresholdPercent=90".to_string());
+    args.push("-XX:G1RSetUpdatingPauseTimePercent=5".to_string());
+    args.push("-XX:SurvivorRatio=32".to_string());
+    args.push("-XX:+UseStringDeduplication".to_string()); // solo G1GC
+    log::info!("[sysinfo] GC: G1GC ajustado (max RAM 3840-7680MB)");
+} else {
+    args.push("-XX:+UseG1GC".to_string());
+    args.push("-XX:MaxGCPauseMillis=200".to_string());
+    log::info!("[sysinfo] GC: G1GC básico (max RAM < 3840MB)");
+}
 
-    // ── Threads según cores ───────────────────────────────────
+// Threads — solo para G1GC, ZGC los gestiona automáticamente
+if max_ram_mb < 7680 {
     if info.cpu_cores >= 8 {
         args.push(format!("-XX:ConcGCThreads={}", info.cpu_cores / 4));
         args.push(format!("-XX:ParallelGCThreads={}", info.cpu_cores / 2));
-        args.push("-XX:+UseStringDeduplication".to_string());
     } else if info.cpu_cores >= 4 {
         args.push("-XX:ConcGCThreads=2".to_string());
         args.push("-XX:ParallelGCThreads=2".to_string());
     }
+}
 
     // ── Optimizaciones generales ──────────────────────────────
     args.push("-XX:+DisableExplicitGC".to_string());

@@ -57,6 +57,7 @@ export default function ModpackDetailScreen() {
         };
         fetchData();
     }, [id]);
+    
 
     // Comprobar instalación cuando tenemos modpack y basePath
     useEffect(() => {

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use anyhow::{anyhow, Context, Result};
 use tokio::process::Command;
 async fn find_java_in_system() -> Option<String> {
@@ -151,29 +153,14 @@ async fn find_java_in_system() -> Option<String> {
     );
     None
 }
-fn get_min_java_version(minecraft_version: &str) -> &'static str {
-    let version = if minecraft_version.starts_with("1.21")
-        || minecraft_version == "1.20.5"
-        || minecraft_version == "1.20.6"
-    {
-        "21"
-    } else if minecraft_version.starts_with("1.20")
-        || minecraft_version.starts_with("1.19")
-        || minecraft_version.starts_with("1.18")
-    {
-        "17"
-    } else if minecraft_version.starts_with("1.17") {
-        "16"
-    } else {
-        "8"
-    };
-
-    log::debug!(
-        "[requirements::get_min_java_version] MC {} → Java {}+",
-        minecraft_version,
-        version
-    );
-    version
+fn get_required_java_version(mc_version: &str) -> &'static str {
+    match mc_version {
+        v if v.starts_with("1.21") => "21",
+        v if v.starts_with("1.20") => "17",
+        v if v.starts_with("1.19") => "17",
+        v if v.starts_with("1.18") => "17",
+        _ => "8",
+    }
 }
 
 async fn has_java_version(min_version: &str) -> Result<bool> {
@@ -250,327 +237,142 @@ async fn has_java_version(min_version: &str) -> Result<bool> {
     Ok(ok)
 }
 
-#[cfg(target_os = "windows")]
-pub async fn install_java(min_version: &str) -> Result<()> {
-    let package_id = match min_version {
-        "21" => "Eclipse.Temurin.21.JRE",
-        "17" => "Eclipse.Temurin.17.JRE",
-        "16" => "Eclipse.Temurin.16.JRE",
-        "8" => "Eclipse.Temurin.8.JRE",
-        _ => {
-            return Err(anyhow!(
-                "Versión Java no soportada para instalación automática: {}",
-                min_version
-            ))
-        }
-    };
+pub async fn install_java(
+    version: &str,
+    launcher_root: &Path,
+) -> Result<()> {
+    let java_root = launcher_root.join("java");
+    tokio::fs::create_dir_all(&java_root).await?;
 
-    // Comprobar si winget existe
-    let winget_available = Command::new("winget")
-        .arg("--version")
-        .output()
-        .await
-        .map(|o| {
-            let v = String::from_utf8_lossy(&o.stdout).to_string();
-            log::info!("[requirements::install_java] winget version: {}", v.trim());
-            o.status.success()
-        })
-        .unwrap_or(false);
-
-    if !winget_available {
-        log::warn!("[requirements::install_java] winget no disponible, usando descarga directa");
-        return install_java_direct(min_version).await;
-    }
-
-    log::info!(
-        "[requirements::install_java] Instalando {} via winget...",
-        package_id
-    );
-
-    let output = Command::new("winget")
-        .args([
-            "install",
-            "--id",
-            package_id,
-            "--silent",
-            "--accept-source-agreements",
-            "--accept-package-agreements",
-            "--scope",
-            "user", // instalar solo para el usuario actual, no requiere admin
-        ])
-        .output()
-        .await
-        .context("Error ejecutando winget")?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    log::debug!("[requirements::install_java] winget stdout:\n{}", stdout);
-    log::debug!("[requirements::install_java] winget stderr:\n{}", stderr);
-    log::debug!(
-        "[requirements::install_java] winget exit code: {:?}",
-        output.status.code()
-    );
-
-    if output.status.success() {
-        log::info!(
-            "[requirements::install_java] {} instalado correctamente via winget",
-            package_id
-        );
-        Ok(())
-    } else {
-        log::warn!("[requirements::install_java] winget falló (código {:?}), intentando descarga directa...", output.status.code());
-        install_java_direct(min_version).await
-    }
-}
-
-// Fallback: descarga directa del MSI de Adoptium
-#[cfg(target_os = "windows")]
-async fn install_java_direct(min_version: &str) -> Result<()> {
-    log::info!(
-        "[requirements::install_java_direct] Descargando Java {} portable (ZIP)...",
-        min_version
-    );
-
-    // ZIP portable — no requiere admin, se extrae en AppData del usuario
-    let (url, folder_name) = match min_version {
+    #[cfg(target_os = "windows")]
+    let (url, extracted_dir, archive_name) = match version {
         "21" => (
             "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.3%2B9/OpenJDK21U-jre_x64_windows_hotspot_21.0.3_9.zip",
-            "jdk-21.0.3+9-jre"
+            "jdk-21.0.3+9-jre",
+            "java21.zip",
         ),
         "17" => (
             "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jre_x64_windows_hotspot_17.0.11_9.zip",
-            "jdk-17.0.11+9-jre"
+            "jdk-17.0.11+9-jre",
+            "java17.zip",
         ),
         "8" => (
             "https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u412-b08/OpenJDK8U-jre_x64_windows_hotspot_8u412b08.zip",
-            "jdk8u412-b08-jre"
+            "jdk8u412-b08-jre",
+            "java8.zip",
         ),
-        _ => return Err(anyhow!("Versión Java no soportada: {}", min_version)),
+        _ => return Err(anyhow!("Versión Java no soportada: {}", version)),
     };
 
-    // Directorio de destino: %LOCALAPPDATA%\kb-mc-launcher\java
-    let java_dir = std::env::var("LOCALAPPDATA")
-        .map(|p| {
-            std::path::PathBuf::from(p)
-                .join("kb-mc-launcher")
-                .join("java")
-        })
-        .unwrap_or_else(|_| std::path::PathBuf::from("java"));
+    #[cfg(target_os = "linux")]
+    let (url, extracted_dir, archive_name) = match version {
+        "21" => (
+            "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.3%2B9/OpenJDK21U-jre_x64_linux_hotspot_21.0.3_9.tar.gz",
+            "jdk-21.0.3+9-jre",
+            "java21.tar.gz",
+        ),
+        "17" => (
+            "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jre_x64_linux_hotspot_17.0.11_9.tar.gz",
+            "jdk-17.0.11+9-jre",
+            "java17.tar.gz",
+        ),
+        "8" => (
+            "https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u412-b08/OpenJDK8U-jre_x64_linux_hotspot_8u412b08.tar.gz",
+            "jdk8u412-b08-jre",
+            "java8.tar.gz",
+        ),
+        _ => return Err(anyhow!("Versión Java no soportada: {}", version)),
+    };
 
-    tokio::fs::create_dir_all(&java_dir)
-        .await
-        .context("No se pudo crear directorio Java")?;
+    let archive_path = java_root.join(archive_name);
 
-    let zip_path = java_dir.join(format!("java{}.zip", min_version));
+    log::info!("Descargando Java {}...", version);
 
-    log::info!(
-        "[requirements::install_java_direct] Descargando desde: {}",
-        url
-    );
-    log::info!(
-        "[requirements::install_java_direct] Destino ZIP: {:?}",
-        zip_path
-    );
-
-    // Descargar
     let response = reqwest::get(url)
-        .await
-        .context("Error descargando Java")?
-        .error_for_status()
-        .context("El servidor devolvió error")?;
+        .await?
+        .error_for_status()?;
 
-    let bytes = response.bytes().await.context("Error leyendo descarga")?;
-    tokio::fs::write(&zip_path, &bytes)
-        .await
-        .context("Error guardando ZIP")?;
+    let bytes = response.bytes().await?;
 
-    log::info!(
-        "[requirements::install_java_direct] ZIP descargado ({} MB)",
-        bytes.len() / 1024 / 1024
-    );
+    tokio::fs::write(&archive_path, &bytes).await?;
 
-    // Extraer con PowerShell (no requiere herramientas extra)
-    log::info!("[requirements::install_java_direct] Extrayendo ZIP...");
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            &format!(
-                "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
-                zip_path.to_string_lossy(),
-                java_dir.to_string_lossy()
-            ),
-        ])
-        .output()
-        .await
-        .context("Error ejecutando PowerShell para extraer ZIP")?;
+    let temp_extract = java_root.join("tmp_extract");
 
-    tokio::fs::remove_file(&zip_path).await.ok();
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::error!(
-            "[requirements::install_java_direct] PowerShell falló: {}",
-            stderr
-        );
-        return Err(anyhow!("Error extrayendo Java: {}", stderr));
+    if temp_extract.exists() {
+        tokio::fs::remove_dir_all(&temp_extract).await.ok();
     }
 
-    // El ZIP extrae en java_dir/jdk-17.0.11+9-jre/bin/java.exe
-    // Renombramos a java_dir/jre/ para que get_java_binary lo encuentre siempre igual
-    let extracted = java_dir.join(folder_name);
-    let final_dir = java_dir.join("jre");
+    tokio::fs::create_dir_all(&temp_extract).await?;
 
-    if extracted.exists() {
-        if final_dir.exists() {
-            tokio::fs::remove_dir_all(&final_dir).await.ok();
+    #[cfg(target_os = "windows")]
+    {
+        let status = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!(
+                    "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
+                    archive_path.display(),
+                    temp_extract.display()
+                ),
+            ])
+            .status()
+            .await?;
+
+        if !status.success() {
+            return Err(anyhow!("No se pudo extraer Java"));
         }
-        tokio::fs::rename(&extracted, &final_dir)
-            .await
-            .context("Error renombrando directorio Java")?;
-        log::info!(
-            "[requirements::install_java_direct] Java extraído en: {:?}",
-            final_dir
-        );
     }
 
-    let java_bin = final_dir.join("bin").join("java.exe");
-    if java_bin.exists() {
-        log::info!(
-            "[requirements::install_java_direct] ✓ Java {} instalado correctamente en {:?}",
-            min_version,
-            java_bin
-        );
-        Ok(())
-    } else {
-        log::error!(
-            "[requirements::install_java_direct] java.exe no encontrado tras extracción: {:?}",
-            java_bin
-        );
-        Err(anyhow!("Java no se extrajo correctamente"))
+    #[cfg(target_os = "linux")]
+    {
+        let status = Command::new("tar")
+            .args([
+                "-xzf",
+                archive_path.to_str().unwrap(),
+                "-C",
+                temp_extract.to_str().unwrap(),
+            ])
+            .status()
+            .await?;
+
+        if !status.success() {
+            return Err(anyhow!("No se pudo extraer Java"));
+        }
     }
-}
 
-#[cfg(target_os = "linux")]
-pub async fn install_java(min_version: &str) -> Result<()> {
-    log::info!("[requirements::install_java] Detectando gestor de paquetes...");
+    let extracted = temp_extract.join(extracted_dir);
 
-    let has_apt = which("apt-get").await;
-    let has_dnf = which("dnf").await;
-    let has_pacman = which("pacman").await;
+    let final_dir = java_root.join(version);
 
-    log::debug!(
-        "[requirements::install_java] apt-get: {} | dnf: {} | pacman: {}",
-        has_apt,
-        has_dnf,
-        has_pacman
-    );
+    if final_dir.exists() {
+        tokio::fs::remove_dir_all(&final_dir).await.ok();
+    }
 
-    let status = if has_apt {
-        let package_name = match min_version {
-            "21" => "openjdk-21-jre",
-            "17" => "openjdk-17-jre",
-            "16" => "openjdk-16-jre",
-            "8" => "openjdk-8-jre",
-            _ => return Err(anyhow!("Versión Java no soportada: {}", min_version)),
-        };
-        log::info!(
-            "[requirements::install_java] apt-get install -y {}",
-            package_name
-        );
-        Command::new("pkexec")
-            .args(["apt-get", "install", "-y", package_name])
-            .status()
-            .await
-            .context("Error ejecutando apt-get")?
-    } else if has_dnf {
-        let package_name = match min_version {
-            "21" => "java-21-openjdk",
-            "17" => "java-17-openjdk",
-            "16" => "java-16-openjdk",
-            "8" => "java-1.8.0-openjdk",
-            _ => return Err(anyhow!("Versión Java no soportada: {}", min_version)),
-        };
-        log::info!(
-            "[requirements::install_java] dnf install -y {}",
-            package_name
-        );
-        Command::new("pkexec")
-            .args(["dnf", "install", "-y", package_name])
-            .status()
-            .await
-            .context("Error ejecutando dnf")?
-    } else if has_pacman {
-        log::info!("[requirements::install_java] pacman -S --noconfirm jre-openjdk");
-        Command::new("pkexec")
-            .args(["pacman", "-S", "--noconfirm", "jre-openjdk"])
-            .status()
-            .await
-            .context("Error ejecutando pacman")?
+    tokio::fs::rename(&extracted, &final_dir).await?;
+
+    tokio::fs::remove_file(&archive_path).await.ok();
+    tokio::fs::remove_dir_all(&temp_extract).await.ok();
+
+    let java_bin = if cfg!(windows) {
+        final_dir.join("bin").join("java.exe")
     } else {
-        log::error!("[requirements::install_java] No se encontró gestor de paquetes compatible");
-        return Err(anyhow!(
-            "No se encontró gestor de paquetes compatible (apt, dnf, pacman). Instala Java {} manualmente.",
-            min_version
-        ));
+        final_dir.join("bin").join("java")
     };
 
-    if status.success() {
-        log::info!(
-            "[requirements::install_java] Java {} instalado correctamente",
-            min_version
-        );
-        Ok(())
-    } else {
-        log::error!(
-            "[requirements::install_java] Falló la instalación de Java {}",
-            min_version
-        );
-        Err(anyhow!("Falló la instalación de Java {}", min_version))
-    }
-}
-
-#[cfg(target_os = "macos")]
-pub async fn install_java(min_version: &str) -> Result<()> {
-    log::info!("[requirements::install_java] macOS — comprobando Homebrew...");
-
-    let has_brew = which("brew").await;
-    if !has_brew {
-        log::error!("[requirements::install_java] Homebrew no encontrado");
+    if !java_bin.exists() {
         return Err(anyhow!(
-            "Homebrew no está instalado. Instala Java {} manualmente desde https://adoptium.net",
-            min_version
+            "Java {} extraído pero no se encontró bin/java",
+            version
         ));
     }
 
-    let cask = match min_version {
-        "21" => "temurin@21",
-        "17" => "temurin@17",
-        "8" => "temurin@8",
-        _ => "temurin@17",
-    };
+    log::info!("Java {} instalado en {:?}", version, final_dir);
 
-    log::info!("[requirements::install_java] brew install --cask {}", cask);
-
-    let status = Command::new("brew")
-        .args(["install", "--cask", cask])
-        .status()
-        .await
-        .context("Error ejecutando brew")?;
-
-    if status.success() {
-        log::info!(
-            "[requirements::install_java] {} instalado correctamente",
-            cask
-        );
-        Ok(())
-    } else {
-        log::error!("[requirements::install_java] Falló brew install {}", cask);
-        Err(anyhow!("Falló brew install {}", cask))
-    }
+    Ok(())
 }
+
 
 async fn which(cmd: &str) -> bool {
     let found = Command::new("which")
@@ -588,27 +390,36 @@ async fn which(cmd: &str) -> bool {
     found
 }
 
-pub async fn check_java_by_minecraft_version(minecraft_version: &str) -> Result<bool> {
-    log::info!(
-        "[requirements::check_java_by_minecraft_version] Comprobando Java para MC {}",
-        minecraft_version
-    );
-    let min_version = get_min_java_version(minecraft_version);
-    let result = has_java_version(min_version).await;
-    log::debug!(
-        "[requirements::check_java_by_minecraft_version] Resultado: {:?}",
-        result
-    );
-    result
-}
+pub async fn check_java_by_minecraft_version(
+    mc_version: &str,
+    launcher_root: &Path,
+) -> bool {
+    let version =
+        get_required_java_version(mc_version);
 
-pub async fn install_java_by_minecraft_version(minecraft_version: &str) -> Result<()> {
+    let java = if cfg!(windows) {
+        launcher_root
+            .join("java")
+            .join(version)
+            .join("bin")
+            .join("java.exe")
+    } else {
+        launcher_root
+            .join("java")
+            .join(version)
+            .join("bin")
+            .join("java")
+    };
+
+    java.exists()
+}
+pub async fn install_java_by_minecraft_version(minecraft_version: &str, launcher_root: &Path) -> Result<()> {
     log::info!(
         "[requirements::install_java_by_minecraft_version] Instalando Java para MC {}",
         minecraft_version
     );
-    let min_version = get_min_java_version(minecraft_version);
-    let result = install_java(min_version).await;
+    let min_version = get_required_java_version(minecraft_version);
+    let result = install_java(min_version,launcher_root).await;
     match &result {
         Ok(_) => log::info!(
             "[requirements::install_java_by_minecraft_version] Java {} instalado OK",
@@ -622,41 +433,32 @@ pub async fn install_java_by_minecraft_version(minecraft_version: &str) -> Resul
     result
 }
 
-pub async fn get_java_binary_async(launcher_root: &std::path::Path) -> String {
-    // 1. Java junto a los datos del launcher
+pub async fn get_java_binary_async(
+    launcher_root: &Path,
+    mc_version: &str,
+) -> String {
+    let java_version = get_required_java_version(mc_version);
+
     let local = if cfg!(windows) {
-        launcher_root.join("java/jre/bin/java.exe")
+        launcher_root
+            .join("java")
+            .join(java_version)
+            .join("bin")
+            .join("java.exe")
     } else {
-        launcher_root.join("java/bin/java")
+        launcher_root
+            .join("java")
+            .join(java_version)
+            .join("bin")
+            .join("java")
     };
 
     if local.exists() {
-        let path = local.to_string_lossy().to_string();
-        log::info!("[requirements::get_java_binary_async] Java del launcher: {}", path);
-        return path;
+        return local.to_string_lossy().to_string();
     }
 
-    // 2. Java portable en LOCALAPPDATA (Windows)
-    #[cfg(target_os = "windows")]
-    if let Ok(local_app) = std::env::var("LOCALAPPDATA") {
-        let portable = std::path::PathBuf::from(&local_app)
-            .join("kb-mc-launcher/java/jre/bin/java.exe");
-        if portable.exists() {
-            let path = portable.to_string_lossy().to_string();
-            log::info!("[requirements::get_java_binary_async] Java portable LOCALAPPDATA: {}", path);
-            return path;
-        }
-        log::debug!("[requirements::get_java_binary_async] No encontrado en LOCALAPPDATA: {:?}", portable);
-    }
-
-    // 3. Buscar en ubicaciones conocidas del sistema
-    if let Some(found) = find_java_in_system().await {
-        log::info!("[requirements::get_java_binary_async] Java encontrado en sistema: {}", found);
-        return found;
-    }
-
-    // 4. Fallback al PATH
-    let system = if cfg!(windows) { "java.exe" } else { "java" };
-    log::warn!("[requirements::get_java_binary_async] Fallback a PATH: {}", system);
-    system.to_string()
+    panic!(
+        "Java {} no instalado en el launcher",
+        java_version
+    );
 }

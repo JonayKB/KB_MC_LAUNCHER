@@ -24,7 +24,7 @@ function SettingsRow({ icon, label, desc, right, onClick, danger }: RowProps) {
     const [hovered, setHovered] = useState(false);
     return (
         <div
-            style={appSettings.row(hovered, danger)}
+            style={appSettings.row(hovered)}
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => setHovered(false)}
             onClick={onClick}

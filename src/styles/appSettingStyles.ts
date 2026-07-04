@@ -76,7 +76,7 @@ export const appSettings = {
     padding: '8px',
   } as S,
 
-  row: (hovered: boolean, danger?: boolean): S => ({
+  row: (hovered: boolean): S => ({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',

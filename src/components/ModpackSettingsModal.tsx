@@ -48,7 +48,13 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
     const [saveHovered, setSaveHovered] = useState(false);
     const [cancelHovered, setCancelHovered] = useState(false);
     const [recBtnHovered, setRecBtnHovered] = useState(false);
-
+    function handleExtraArgsChange(value: string) {
+        const gcPattern = /-XX:[+-]Use(G1|ZGC|Shenandoah|Parallel|Serial|ConcMarkSweep)GC/;
+        if (gcPattern.test(value)) {
+            console.warn('Los GC args se gestionan automáticamente según tu hardware');
+        }
+        set('extraJvmArgs', value);
+    }
     useEffect(() => {
         invoke<RecommendedSettings & { total_ram_mb?: number }>('get_recommended_settings')
             .then(rec => {
@@ -82,15 +88,15 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
         setSettings(prev => ({ ...prev, [key]: value }));
     }
 
- function handleResolutionChange(idx: number) {
-    const preset = RESOLUTIONS[idx];
-    if (preset.width !== 0) {
-        set('windowWidth', preset.width);
-        set('windowHeight', preset.height);
-    } else {
-        setSettings(prev => ({ ...prev }));
+    function handleResolutionChange(idx: number) {
+        const preset = RESOLUTIONS[idx];
+        if (preset.width !== 0) {
+            set('windowWidth', preset.width);
+            set('windowHeight', preset.height);
+        } else {
+            setSettings(prev => ({ ...prev }));
+        }
     }
-}
 
     function handleSave() {
         saveSettings(modpackId, settings);
@@ -286,41 +292,41 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
                         </div>
 
                         {!settings.fullscreen && (
-    <>
-        <CustomDropdown
-            options={RESOLUTIONS.map((r, idx) => ({ label: r.label, value: idx }))}
-            value={
-                RESOLUTIONS.findIndex(r => r.width === settings.windowWidth && r.height === settings.windowHeight) === -1
-                    ? RESOLUTIONS.length - 1
-                    : RESOLUTIONS.findIndex(r => r.width === settings.windowWidth && r.height === settings.windowHeight)
-            }
-            onChange={handleResolutionChange}
-        />
+                            <>
+                                <CustomDropdown
+                                    options={RESOLUTIONS.map((r, idx) => ({ label: r.label, value: idx }))}
+                                    value={
+                                        RESOLUTIONS.findIndex(r => r.width === settings.windowWidth && r.height === settings.windowHeight) === -1
+                                            ? RESOLUTIONS.length - 1
+                                            : RESOLUTIONS.findIndex(r => r.width === settings.windowWidth && r.height === settings.windowHeight)
+                                    }
+                                    onChange={handleResolutionChange}
+                                />
 
-        {isCustomRes && (
-            <div style={modal.customResRow}>
-                <input
-                    type="number"
-                    style={modal.customInput}
-                    value={settings.windowWidth}
-                    min={640} max={7680}
-                    onChange={e => set('windowWidth', Number(e.target.value))}
-                    placeholder="1280"
-                />
-                <span style={modal.customSep}>×</span>
-                <input
-                    type="number"
-                    style={modal.customInput}
-                    value={settings.windowHeight}
-                    min={360} max={4320}
-                    onChange={e => set('windowHeight', Number(e.target.value))}
-                    placeholder="720"
-                />
-                <span style={{ fontSize: '12px', color: 'var(--text-faint)' }}>px</span>
-            </div>
-        )}
-    </>
-)}
+                                {isCustomRes && (
+                                    <div style={modal.customResRow}>
+                                        <input
+                                            type="number"
+                                            style={modal.customInput}
+                                            value={settings.windowWidth}
+                                            min={640} max={7680}
+                                            onChange={e => set('windowWidth', Number(e.target.value))}
+                                            placeholder="1280"
+                                        />
+                                        <span style={modal.customSep}>×</span>
+                                        <input
+                                            type="number"
+                                            style={modal.customInput}
+                                            value={settings.windowHeight}
+                                            min={360} max={4320}
+                                            onChange={e => set('windowHeight', Number(e.target.value))}
+                                            placeholder="720"
+                                        />
+                                        <span style={{ fontSize: '12px', color: 'var(--text-faint)' }}>px</span>
+                                    </div>
+                                )}
+                            </>
+                        )}
                     </div>
 
                     <div style={modal.divider} />
@@ -331,10 +337,14 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
                         <textarea
                             style={modal.textarea}
                             value={settings.extraJvmArgs}
-                            onChange={e => set('extraJvmArgs', e.target.value)}
-                            placeholder="-XX:+UseZGC -Dfml.readTimeout=120"
+                            onChange={e => handleExtraArgsChange(e.target.value)}
+                            placeholder="-Dfml.readTimeout=120 -Dfml.loginTimeout=60"
                             spellCheck={false}
                         />
+                        <span style={{ fontSize: '11px', color: 'var(--text-faint)', lineHeight: 1.4 }}>
+                            El GC y la RAM se configuran automáticamente según tu hardware.
+                            Aquí solo añade args adicionales como timeouts o flags de mods.
+                        </span>
                         <span style={{ fontSize: '11px', color: 'var(--text-faint)', lineHeight: 1.4 }}>
                             Separados por espacio o uno por línea. Se añaden al final de los args JVM de Forge.
                         </span>

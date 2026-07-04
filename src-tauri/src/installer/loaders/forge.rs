@@ -28,27 +28,25 @@ pub async fn install(
 
     // ── 0. Java ───────────────────────────────────────────────
     log::info!("[forge::install] Comprobando Java para MC {}...", mc_version);
-    match check_java_by_minecraft_version(mc_version).await {
-        Ok(true) => log::info!("[forge::install] Java OK"),
-        Ok(false) => {
-            log::warn!("[forge::install] Java no cumple requisitos, instalando...");
-            emit(app, ProgressPayload::Step {
-                step: "Java no cumple los requisitos. Instalando Java...".into(),
-                percent: 0,
-            });
-            if let Err(e) = install_java_by_minecraft_version(mc_version).await {
-                log::error!("[forge::install] Error instalando Java: {:#}", e);
-                return Err(e);
-            }
-            log::info!("[forge::install] Java instalado correctamente");
-        }
-        Err(e) => {
-            log::error!("[forge::install] Error comprobando Java: {:#}", e);
-            return Err(e);
-        }
-    }
+    if !check_java_by_minecraft_version(
+    mc_version,
+    launcher_root,
+)
+.await
+{
+    install_java_by_minecraft_version(
+        mc_version,
+        launcher_root,
+    )
+    .await?;
+}
 
-    let java_bin = get_java_binary_async(launcher_root).await;
+    let java_bin =
+    get_java_binary_async(
+        launcher_root,
+        mc_version,
+    )
+    .await;
     log::info!("[forge::install] Usando Java: {}", java_bin);
 
     tokio::fs::create_dir_all(versions_dir).await.ok();
@@ -218,147 +216,71 @@ async fn download_libraries(
     label: &str,
 ) {
     let libs_dir = launcher_root.join("libraries");
-    let libs: Vec<_> = json["libraries"]
+
+    let items: Vec<(String, std::path::PathBuf)> = json["libraries"]
         .as_array()
-        .map(|arr| arr.iter().filter(|lib| {
-            let url  = lib["downloads"]["artifact"]["url"].as_str().unwrap_or("");
-            let path = lib["downloads"]["artifact"]["path"].as_str().unwrap_or("");
-            !url.is_empty() && !path.is_empty()
+        .map(|arr| arr.iter().filter_map(|lib| {
+            let url  = lib["downloads"]["artifact"]["url"].as_str()?;
+            let path = lib["downloads"]["artifact"]["path"].as_str()?;
+            if url.is_empty() { return None; }
+            Some((url.to_string(), libs_dir.join(path)))
         }).collect())
         .unwrap_or_default();
 
-    let total = libs.len();
-    log::debug!("[download_libraries] {} — {} libraries a procesar", label, total);
-
-    for (i, lib) in libs.iter().enumerate() {
-        let url  = lib["downloads"]["artifact"]["url"].as_str().unwrap();
-        let path = lib["downloads"]["artifact"]["path"].as_str().unwrap();
-        let dest = libs_dir.join(path);
-        let percent = ((i + 1) as f64 / total as f64 * 100.0) as u8;
-
-        if dest.exists() {
-            log::trace!("[download_libraries] Ya existe ({}/{}): {}", i + 1, total, path);
-            emit(app, ProgressPayload::Extract {
-                step: format!("{} ({}/{})", label, i + 1, total),
-                percent,
-                extracted_files: i + 1,
-                total_files: total,
-                speed_fps: 0.0,
-            });
-            continue;
-        }
-
-        if let Some(parent) = dest.parent() {
-            tokio::fs::create_dir_all(parent).await.ok();
-        }
-
-        let filename = dest.file_name().and_then(|n| n.to_str()).unwrap_or(path);
-        log::debug!("[download_libraries] Descargando ({}/{}): {}", i + 1, total, filename);
-
-        let step_label = format!("{} ({}/{}) — {}", label, i + 1, total, filename);
-        if let Err(e) = download::download_to(url, &dest, Some(app), &step_label).await {
-            log::warn!("[download_libraries] Error descargando {}: {:#}", filename, e);
-        }
-    }
-
-    log::debug!("[download_libraries] {} completado", label);
+    log::info!("[download_libraries] {} — {} items en paralelo", label, items.len());
+    download::download_many(items, 16, Some(app), label).await;
+    log::info!("[download_libraries] {} completado", label);
 }
 
 async fn download_assets(mc_json: &serde_json::Value, launcher_root: &Path, app: &AppHandle) {
     let asset_index_url = mc_json["assetIndex"]["url"].as_str();
     let asset_id        = mc_json["assetIndex"]["id"].as_str();
-
-    let (Some(index_url), Some(id)) = (asset_index_url, asset_id) else {
-        log::warn!("[download_assets] No se encontró assetIndex en el JSON de Minecraft");
-        return;
-    };
-
-    log::info!("[download_assets] Asset index ID: {}", id);
+    let (Some(index_url), Some(id)) = (asset_index_url, asset_id) else { return };
 
     let indexes_dir = launcher_root.join("assets").join("indexes");
     tokio::fs::create_dir_all(&indexes_dir).await.ok();
     let index_path = indexes_dir.join(format!("{}.json", id));
 
     if !index_path.exists() {
-        log::info!("[download_assets] Descargando índice de assets desde: {}", index_url);
         emit(app, ProgressPayload::Step {
             step: "Descargando índice de assets...".into(), percent: 0,
         });
-        if let Err(e) = download::download_to(index_url, &index_path, Some(app), "Índice de assets").await {
-            log::error!("[download_assets] Error descargando índice: {:#}", e);
-            return;
-        }
-    } else {
-        log::info!("[download_assets] Índice de assets ya existe");
+        download::download_to(index_url, &index_path, None, "").await.ok();
     }
 
-    let Ok(index_str) = tokio::fs::read_to_string(&index_path).await else {
-        log::error!("[download_assets] No se pudo leer el índice de assets");
-        return;
-    };
-    let Ok(index_json) = serde_json::from_str::<serde_json::Value>(&index_str) else {
-        log::error!("[download_assets] Índice de assets JSON inválido");
-        return;
-    };
-    let Some(objects) = index_json["objects"].as_object() else {
-        log::error!("[download_assets] Campo 'objects' no encontrado en el índice");
-        return;
-    };
+    let Ok(index_str)  = tokio::fs::read_to_string(&index_path).await else { return };
+    let Ok(index_json) = serde_json::from_str::<serde_json::Value>(&index_str) else { return };
+    let Some(objects)  = index_json["objects"].as_object() else { return };
 
     let objects_dir = launcher_root.join("assets").join("objects");
 
-    let pending: Vec<_> = objects.values()
+    let items: Vec<(String, std::path::PathBuf)> = objects.values()
         .filter_map(|obj| obj["hash"].as_str())
-        .filter(|hash| {
+        .map(|hash| {
             let prefix = &hash[..2];
-            !objects_dir.join(prefix).join(hash).exists()
+            let dest   = objects_dir.join(prefix).join(hash);
+            let url    = format!(
+                "https://resources.download.minecraft.net/{}/{}",
+                prefix, hash
+            );
+            (url, dest)
         })
         .collect();
 
-    let total = pending.len();
-    let already_downloaded = objects.len() - total;
+    let total = items.len();
+    let already = items.iter().filter(|(_, d)| d.exists()).count();
+    let pending = total - already;
 
-    log::info!("[download_assets] {} assets totales — {} ya descargados — {} pendientes",
-        objects.len(), already_downloaded, total);
+    log::info!("[download_assets] {} assets totales — {} ya descargados — {} pendientes", total, already, pending);
 
-    if total == 0 {
-        log::info!("[download_assets] Todos los assets ya están descargados");
+    if pending == 0 {
         emit(app, ProgressPayload::Step {
             step: "Assets ya descargados".into(), percent: 100,
         });
         return;
     }
 
-    for (i, hash) in pending.iter().enumerate() {
-        let prefix = &hash[..2];
-        let dest = objects_dir.join(prefix).join(hash);
-        let percent = ((i + 1) as f64 / total as f64 * 100.0) as u8;
-
-        tokio::fs::create_dir_all(dest.parent().unwrap()).await.ok();
-
-        let asset_url = format!(
-            "https://resources.download.minecraft.net/{}/{}",
-            prefix, hash
-        );
-
-        log::trace!("[download_assets] ({}/{}) {}", i + 1, total, hash);
-
-        let step_label = format!("Assets ({}/{}) — {}", i + 1, total, hash);
-        if let Err(e) = download::download_to(&asset_url, &dest, Some(app), &step_label).await {
-            log::warn!("[download_assets] Error descargando asset {}: {:#}", hash, e);
-        }
-
-        if i % 10 == 0 || i == total - 1 {
-            log::debug!("[download_assets] Progreso: {}/{} ({}%)", i + 1, total, percent);
-            emit(app, ProgressPayload::Extract {
-                step: format!("Descargando assets ({}/{})", i + 1, total),
-                percent,
-                extracted_files: i + 1,
-                total_files: total,
-                speed_fps: 0.0,
-            });
-        }
-    }
-
-    log::info!("[download_assets] ✓ {} assets descargados", total);
+    // Más concurrencia para assets (son archivos pequeños)
+    download::download_many(items, 32, Some(app), "Assets").await;
+    log::info!("[download_assets] ✓ Assets completados");
 }

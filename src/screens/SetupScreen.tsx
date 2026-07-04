@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useUser } from '../context/UserContext';
 import { layout, logo, header, box, text, btn, input as inp } from '../styles/components';
 
 type Step = 'owns_minecraft' | 'offline_username' | 'microsoft_prompt';
 
 export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () => void }>) {
-    const { setHasMinecraftOwned, setUsername, username, hasMinecraftOwned } = useUser();
+    const { setHasMinecraftOwned, setUsername } = useUser();
     const [step, setStep] = useState<Step>('owns_minecraft');
     const [inputUsername, setInputUsername] = useState('');
     const [inputError, setInputError] = useState<string | null>(null);
@@ -20,16 +20,17 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
 
     function handleOfflineSubmit() {
         const name = inputUsername.trim();
-        if (name.length < 3 || name.length > 16) { setInputError('El nombre debe tener entre 3 y 16 caracteres'); return; }
-        if (!/^[a-zA-Z0-9_]+$/.test(name)) { setInputError('Solo letras, números y guiones bajos'); return; }
+        if (name.length < 3 || name.length > 16) {
+            setInputError('El nombre debe tener entre 3 y 16 caracteres');
+            return;
+        }
+        if (!/^[a-zA-Z0-9_]+$/.test(name)) {
+            setInputError('Solo letras, números y guiones bajos');
+            return;
+        }
         setUsername(name);
         onComplete();
     }
-    useEffect(() => {
-        if (username || hasMinecraftOwned === null) onComplete();
-
-    }, [hasMinecraftOwned, username]);
-
     return (
         <div style={layout.fullscreenCenter}>
             <div style={layout.card}>
