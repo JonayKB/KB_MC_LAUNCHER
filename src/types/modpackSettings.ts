@@ -10,9 +10,9 @@ export interface ModpackSettings {
 export const DEFAULT_SETTINGS: ModpackSettings = {
   minRamMb: 512,
   maxRamMb: 4096,
-  fullscreen: false,
-  windowWidth: 1280,
-  windowHeight: 720,
+  fullscreen: true,
+  windowWidth: 1920,
+  windowHeight: 1080,
   extraJvmArgs: '',
 };
 
