@@ -57,7 +57,7 @@ export default function ModpackDetailScreen() {
         };
         fetchData();
     }, [id]);
-    
+
 
     // Comprobar instalación cuando tenemos modpack y basePath
     useEffect(() => {
@@ -96,6 +96,14 @@ export default function ModpackDetailScreen() {
     useEffect(() => {
         if (!modpack) return;
         setModpackSettings(loadSettings(modpack.modpackId));
+
+        const images = modpack?.images;
+        if (!images || images.length === 0) return;
+
+        images.forEach((url) => {
+            const img = new Image();
+            img.src = url;
+        });
     }, [modpack]);
     function handleOpenSettings() {
         setSettingsOpen(true);
