@@ -15,9 +15,7 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
     const [noHovered, setNoHovered] = useState(false);
     const [continueHovered, setContinueHovered] = useState(false);
     const [loginState, setLoginState] = useState<'idle' | 'waiting_code' | 'polling' | 'done'>('idle');
-    const [userCode, setUserCode] = useState('');
     const [loginError, setLoginError] = useState<string | null>(null);
-    const [loginMessage, setLoginMessage] = useState('');
 
     function handleOwnsMinecraft(owns: boolean) {
         setHasMinecraftOwned(owns);

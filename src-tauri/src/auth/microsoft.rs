@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use axum::{extract::Query, response::Html, routing::get, Router};
 use oauth2::{
     basic::BasicClient, AuthUrl, AuthorizationCode, ClientId, CsrfToken, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, TokenUrl,
+    RedirectUrl, Scope, TokenResponse, TokenUrl,
 };
 use std::collections::HashMap;
 use tokio::sync::oneshot;
@@ -73,6 +73,5 @@ pub async fn login() -> Result<String> {
         .await
         .context("Error obteniendo token Microsoft")?;
 
-    
     Ok(token.access_token().secret().to_string())
 }

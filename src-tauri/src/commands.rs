@@ -225,38 +225,23 @@ pub async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn auth_microsoft()
--> Result<LoginCompleteResponse, String>
-{
-    let ms_token =
-        microsoft::login()
-            .await
-            .map_err(|e| e.to_string())?;
+pub async fn auth_microsoft() -> Result<LoginCompleteResponse, String> {
+    let ms_token = microsoft::login().await.map_err(|e| e.to_string())?;
 
-    let client =
-        reqwest::Client::new();
+    let client = reqwest::Client::new();
 
-    let xbox =
-        xbox::authenticate(
-            &client,
-            &ms_token,
-        )
+    let xbox = xbox::authenticate(&client, &ms_token)
         .await
         .map_err(|e| e.to_string())?;
 
-    let profile =
-        minecraft::authenticate(
-            &client,
-            &xbox,
-        )
+    let profile = minecraft::authenticate(&client, &xbox)
         .await
         .map_err(|e| e.to_string())?;
 
     Ok(LoginCompleteResponse {
         uuid: profile.uuid,
         username: profile.username,
-        access_token:
-            profile.access_token,
+        access_token: profile.access_token,
         skin_head_base64: None,
     })
 }
