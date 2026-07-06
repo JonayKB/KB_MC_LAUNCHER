@@ -1,21 +1,59 @@
 import { useState } from 'react';
 import { useUser } from '../context/UserContext';
 import { layout, logo, header, box, text, btn, input as inp } from '../styles/components';
+import { invoke } from '@tauri-apps/api/core';
+import { LoginCompleteResponse, LoginStartResponse } from '../types/setup';
 
 type Step = 'owns_minecraft' | 'offline_username' | 'microsoft_prompt';
 
 export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () => void }>) {
-    const { setHasMinecraftOwned, setUsername } = useUser();
+    const { setHasMinecraftOwned, setUsername, setUuid, setAccessToken } = useUser();
     const [step, setStep] = useState<Step>('owns_minecraft');
     const [inputUsername, setInputUsername] = useState('');
     const [inputError, setInputError] = useState<string | null>(null);
     const [yesHovered, setYesHovered] = useState(false);
     const [noHovered, setNoHovered] = useState(false);
     const [continueHovered, setContinueHovered] = useState(false);
+    const [loginState, setLoginState] = useState<'idle' | 'waiting_code' | 'polling' | 'done'>('idle');
+    const [userCode, setUserCode] = useState('');
+    const [loginError, setLoginError] = useState<string | null>(null);
 
     function handleOwnsMinecraft(owns: boolean) {
         setHasMinecraftOwned(owns);
         setStep(owns ? 'microsoft_prompt' : 'offline_username');
+    }
+    async function handleMicrosoftLogin() {
+        setLoginState('waiting_code');
+        setLoginError(null);
+
+        try {
+            // Paso 1: obtener código
+            const start = await invoke<LoginStartResponse>('auth_start');
+            setUserCode(start.user_code);
+
+            // Abrir browser del sistema con la URL de verificación
+            await open(start.verification_uri);
+
+            setLoginState('polling');
+
+            // Paso 2: esperar a que el usuario complete el login
+            const result = await invoke<LoginCompleteResponse>('auth_poll', {
+                deviceCode: start.device_code,
+                interval: start.interval,
+            });
+
+            // Guardar en contexto
+            setUsername(result.username);
+            setUuid(result.uuid);
+            setAccessToken(result.access_token);
+
+            setLoginState('done');
+            onComplete();
+
+        } catch (err) {
+            setLoginError(`Error: ${err}`);
+            setLoginState('idle');
+        }
     }
 
     function handleOfflineSubmit() {
@@ -101,23 +139,38 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
 
                 {step === 'microsoft_prompt' && (
                     <div style={layout.col('16px')}>
-                        <div style={box.info}>
-                            <div style={layout.rowTop}>
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                                    stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round">
-                                    <circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" />
-                                </svg>
-                                <span style={text.info}>
-                                    Se te pedirá iniciar sesión con tu cuenta de Microsoft la primera vez que lances el juego.
-                                </span>
+                        {loginState === 'idle' && (
+                            <button onClick={handleMicrosoftLogin} style={btn.primary}>
+                                Iniciar sesión con Microsoft
+                            </button>
+                        )}
+
+                        {loginState === 'waiting_code' && (
+                            <div style={box.info}>
+                                <span style={text.info}>Abriendo navegador...</span>
                             </div>
-                        </div>
-                        <button
-                            style={{ ...btn.primary, ...(continueHovered ? btn.primaryHover : {}) }}
-                            onMouseEnter={() => setContinueHovered(true)}
-                            onMouseLeave={() => setContinueHovered(false)}
-                            onClick={onComplete}
-                        >Entendido, continuar</button>
+                        )}
+
+                        {loginState === 'polling' && (
+                            <div style={layout.col('8px')}>
+                                <div style={box.info}>
+                                    <span style={{ fontFamily: 'var(--font-condensed)', fontSize: '28px', fontWeight: 800, color: 'var(--accent)', letterSpacing: '0.1em' }}>
+                                        {userCode}
+                                    </span>
+                                    <span style={text.info}>
+                                        Introduce este código en <strong>microsoft.com/devicelogin</strong>
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-faint)', fontSize: '13px' }}>
+                                    <div style={{ width: '14px', height: '14px', border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                                    Esperando verificación...
+                                </div>
+                            </div>
+                        )}
+
+                        {loginError && (
+                            <span style={text.fieldError}>{loginError}</span>
+                        )}
                     </div>
                 )}
 

@@ -4,6 +4,25 @@ use crate::installer;
 use std::path::Path;
 use crate::launcher::{launch, LaunchSettings};
 use crate::installer::sysinfo::{get_system_info, recommend_settings, RecommendedSettings};
+use crate::auth::{microsoft, xbox, minecraft, skin};
+
+#[derive(serde::Serialize)]
+pub struct LoginStartResponse {
+    pub user_code: String,
+    pub verification_uri: String,
+    pub device_code: String,
+    pub interval: u64,
+    pub expires_in: u64,
+}
+
+#[derive(serde::Serialize)]
+pub struct LoginCompleteResponse {
+    pub uuid: String,
+    pub username: String,
+    pub access_token: String,
+    pub skin_head_base64: Option<String>,
+}
+
 #[tauri::command]
 pub fn get_recommended_settings() -> RecommendedSettings {
     let info = get_system_info();
@@ -183,4 +202,53 @@ pub async fn clear_all_cache(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
     app.restart();
+}
+
+#[tauri::command]
+pub async fn auth_start() -> Result<LoginStartResponse, String> {
+    let client = reqwest::Client::new();
+    let device = microsoft::get_device_code(&client)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(LoginStartResponse {
+        user_code:        device.user_code,
+        verification_uri: device.verification_uri,
+        device_code:      device.device_code,
+        interval:         device.interval,
+        expires_in:       device.expires_in,
+    })
+}
+#[tauri::command]
+pub async fn auth_poll(device_code: String, interval: u64) -> Result<LoginCompleteResponse, String> {
+    let client = reqwest::Client::new();
+
+    // Token de Microsoft
+    let ms_token = microsoft::poll_token(&client, &device_code, interval)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Xbox Live + XSTS
+    let xbox_tokens = xbox::authenticate(&client, &ms_token.access_token)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Minecraft
+    let profile = minecraft::authenticate(&client, &xbox_tokens)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Cabeza de skin (opcional — no falla si no se puede obtener)
+    let skin_head_base64 = if let Some(ref url) = profile.skin_url {
+        skin::get_head_base64(url).await.ok()
+    } else {
+        None
+    };
+
+    Ok(LoginCompleteResponse {
+        uuid:             profile.uuid,
+        username:         profile.username,
+        access_token:     profile.access_token,
+        skin_head_base64,
+    })
 }

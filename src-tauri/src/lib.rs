@@ -1,9 +1,10 @@
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
-mod launcher;
-mod installer;
 mod commands;
+mod installer;
+mod launcher;
+mod auth;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -61,16 +62,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
-         commands::install_modpack,
-         commands::fetch_text,
-         commands::get_base_path,
-         commands::is_modpack_installed,   
-         commands::launch_modpack,   
-         commands::open_directory,
-         commands::uninstall_modpack, 
-         commands::get_recommended_settings,
-         commands::clear_all_cache,
-         commands::restart_app
+            commands::install_modpack,
+            commands::fetch_text,
+            commands::get_base_path,
+            commands::is_modpack_installed,
+            commands::launch_modpack,
+            commands::open_directory,
+            commands::uninstall_modpack,
+            commands::get_recommended_settings,
+            commands::clear_all_cache,
+            commands::restart_app,
+            commands::auth_start,
+            commands::auth_poll,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

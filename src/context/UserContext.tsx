@@ -10,17 +10,25 @@ interface UserContextValue {
     resetSetup: () => void;
     basePath: string | null;
     isLoading: boolean;
+    uuid: string | null;
+    setUuid: (uuid: string) => void;
+    accessToken: string | null;
+    setAccessToken: (token: string) => void;
 }
 
 const UserContext = createContext<UserContextValue>({
     hasMinecraftOwned: null,
-    setHasMinecraftOwned: () => {},
+    setHasMinecraftOwned: () => { },
     username: undefined,
-    setUsername: () => {},
+    setUsername: () => { },
     isSetupDone: false,
-    resetSetup: () => {},
+    resetSetup: () => { },
     basePath: null,
     isLoading: true,
+    uuid: null,
+    setUuid: () => { },
+    accessToken: null,
+    setAccessToken: () => { },
 });
 
 export function useUser() {
@@ -32,11 +40,15 @@ const LS_KEY = 'kb_launcher_user';
 interface PersistedUser {
     hasMinecraftOwned: boolean | null;
     username?: string;
+    uuid?: string;
+    accessToken?: string;
 }
 
 export function UserProvider({ children }: Readonly<{ children: React.ReactNode }>) {
     const [hasMinecraftOwned, setHasMinecraftOwnedState] = useState<boolean | null>(null);
     const [username, setUsernameState] = useState<string | undefined>(undefined);
+    const [uuid, setUuid] = useState<string | null>(null);
+    const [accessToken, setAccessToken] = useState<string | null>(null);
     const [basePath, setBasePath] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
@@ -50,6 +62,8 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
                 console.log('[UserContext] datos parseados:', data);
                 setHasMinecraftOwnedState(data.hasMinecraftOwned);
                 setUsernameState(data.username);
+                setUuid(data.uuid || null);
+                setAccessToken(data.accessToken || null);
             } else {
                 console.log('[UserContext] localStorage vacío');
             }
@@ -73,10 +87,10 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
             console.log('[UserContext] → skip (hasMinecraftOwned null)');
             return;
         }
-        const toSave = { hasMinecraftOwned, username };
+        const toSave = { hasMinecraftOwned, username, uuid, accessToken };
         console.log('[UserContext] → guardando:', toSave);
         localStorage.setItem(LS_KEY, JSON.stringify(toSave));
-    }, [hasMinecraftOwned, username]);
+    }, [hasMinecraftOwned, username, uuid, accessToken]);
 
     function setHasMinecraftOwned(owned: boolean) {
         setHasMinecraftOwnedState(owned);
@@ -108,6 +122,10 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
             resetSetup,
             basePath,
             isLoading,
+            uuid,
+            setUuid,
+            accessToken,
+            setAccessToken,
         }}>
             {children}
         </UserContext.Provider>
