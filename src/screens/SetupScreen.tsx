@@ -17,45 +17,33 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
     const [loginState, setLoginState] = useState<'idle' | 'waiting_code' | 'polling' | 'done'>('idle');
     const [userCode, setUserCode] = useState('');
     const [loginError, setLoginError] = useState<string | null>(null);
+    const [loginMessage, setLoginMessage] = useState('');
 
     function handleOwnsMinecraft(owns: boolean) {
         setHasMinecraftOwned(owns);
         setStep(owns ? 'microsoft_prompt' : 'offline_username');
     }
     async function handleMicrosoftLogin() {
-        setLoginState('waiting_code');
-        setLoginError(null);
-
         try {
-            // Paso 1: obtener código
-            const start = await invoke<LoginStartResponse>('auth_start');
-            setUserCode(start.user_code);
-
-            // Abrir browser del sistema con la URL de verificación
-            await open(start.verification_uri);
-
             setLoginState('polling');
 
-            // Paso 2: esperar a que el usuario complete el login
-            const result = await invoke<LoginCompleteResponse>('auth_poll', {
-                deviceCode: start.device_code,
-                interval: start.interval,
-            });
+            const result =
+                await invoke<LoginCompleteResponse>(
+                    'auth_microsoft'
+                );
 
-            // Guardar en contexto
             setUsername(result.username);
             setUuid(result.uuid);
             setAccessToken(result.access_token);
 
             setLoginState('done');
-            onComplete();
 
-        } catch (err) {
-            setLoginError(`Error: ${err}`);
+            onComplete();
+        } catch (e) {
+            setLoginError(String(e));
             setLoginState('idle');
         }
     }
-
     function handleOfflineSubmit() {
         const name = inputUsername.trim();
         if (name.length < 3 || name.length > 16) {
@@ -150,23 +138,14 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
                                 <span style={text.info}>Abriendo navegador...</span>
                             </div>
                         )}
-
                         {loginState === 'polling' && (
-                            <div style={layout.col('8px')}>
-                                <div style={box.info}>
-                                    <span style={{ fontFamily: 'var(--font-condensed)', fontSize: '28px', fontWeight: 800, color: 'var(--accent)', letterSpacing: '0.1em' }}>
-                                        {userCode}
-                                    </span>
-                                    <span style={text.info}>
-                                        Introduce este código en <strong>microsoft.com/devicelogin</strong>
-                                    </span>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-faint)', fontSize: '13px' }}>
-                                    <div style={{ width: '14px', height: '14px', border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                                    Esperando verificación...
-                                </div>
+                            <div style={box.info}>
+                                <span style={text.info}>
+                                    Esperando inicio de sesión...
+                                </span>
                             </div>
                         )}
+
 
                         {loginError && (
                             <span style={text.fieldError}>{loginError}</span>

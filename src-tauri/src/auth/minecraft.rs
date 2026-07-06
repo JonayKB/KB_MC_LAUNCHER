@@ -1,7 +1,7 @@
+use crate::auth::xbox::XboxTokens;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use crate::auth::xbox::XboxTokens;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MinecraftProfile {
@@ -11,27 +11,33 @@ pub struct MinecraftProfile {
     pub skin_url: Option<String>,
 }
 
-pub async fn authenticate(
-    client: &reqwest::Client,
-    xbox: &XboxTokens,
-) -> Result<MinecraftProfile> {
+pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result<MinecraftProfile> {
     // ── 1. Token de Minecraft ─────────────────────────────────
     log::info!("[minecraft] Obteniendo token de Minecraft...");
 
-    let mc_resp: serde_json::Value = client
+    let mc_resp = client
         .post("https://api.minecraftservices.com/authentication/login_with_xbox")
         .json(&json!({
             "identityToken": format!(
                 "XBL3.0 x={};{}",
-                xbox.user_hash, xbox.xsts_token
+                xbox.user_hash,
+                xbox.xsts_token
             )
         }))
         .send()
         .await
-        .context("Error contactando Minecraft Services")?
-        .json()
+        .context("Error contactando Minecraft Services")?;
+
+    let status = mc_resp.status();
+
+    let body = mc_resp
+        .text()
         .await
-        .context("Error parseando token de Minecraft")?;
+        .context("Error leyendo respuesta Minecraft")?;
+
+    log::info!("[minecraft] status={} body={}", status, body);
+
+    let mc_resp: serde_json::Value = serde_json::from_str(&body)?;
 
     let access_token = mc_resp["access_token"]
         .as_str()
@@ -55,10 +61,12 @@ pub async fn authenticate(
 
     let has_game = entitlements["items"]
         .as_array()
-        .map(|items| items.iter().any(|i| {
-            i["name"].as_str() == Some("game_minecraft") ||
-            i["name"].as_str() == Some("product_minecraft")
-        }))
+        .map(|items| {
+            items.iter().any(|i| {
+                i["name"].as_str() == Some("game_minecraft")
+                    || i["name"].as_str() == Some("product_minecraft")
+            })
+        })
         .unwrap_or(false);
 
     if !has_game {
@@ -81,8 +89,14 @@ pub async fn authenticate(
         .await
         .context("Error parseando perfil")?;
 
-    let uuid     = profile["id"].as_str().context("UUID no encontrado")?.to_string();
-    let username = profile["name"].as_str().context("Username no encontrado")?.to_string();
+    let uuid = profile["id"]
+        .as_str()
+        .context("UUID no encontrado")?
+        .to_string();
+    let username = profile["name"]
+        .as_str()
+        .context("Username no encontrado")?
+        .to_string();
 
     // ── 4. Obtener URL de la skin ─────────────────────────────
     let skin_url = profile["skins"]
@@ -91,7 +105,16 @@ pub async fn authenticate(
         .and_then(|skin| skin["url"].as_str())
         .map(|s| s.to_string());
 
-    log::info!("[minecraft] ✓ Perfil obtenido — username: {} | uuid: {}", username, uuid);
+    log::info!(
+        "[minecraft] ✓ Perfil obtenido — username: {} | uuid: {}",
+        username,
+        uuid
+    );
 
-    Ok(MinecraftProfile { uuid, username, access_token, skin_url })
+    Ok(MinecraftProfile {
+        uuid,
+        username,
+        access_token,
+        skin_url,
+    })
 }

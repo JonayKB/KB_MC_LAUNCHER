@@ -12,7 +12,7 @@ pub async fn authenticate(client: &reqwest::Client, ms_access_token: &str) -> Re
     // ── 1. Xbox Live ──────────────────────────────────────────
     log::info!("[xbox] Autenticando con Xbox Live...");
 
-    let xbl_resp: serde_json::Value = client
+    let resp = client
         .post("https://user.auth.xboxlive.com/user/authenticate")
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
@@ -27,10 +27,20 @@ pub async fn authenticate(client: &reqwest::Client, ms_access_token: &str) -> Re
         }))
         .send()
         .await
-        .context("Error contactando Xbox Live")?
-        .json()
-        .await
-        .context("Error parseando respuesta XBL")?;
+        .context("Error contactando Xbox Live")?;
+
+    let status = resp.status();
+    let body = resp.text().await.context("Error leyendo respuesta XBL")?;
+    log::info!("[microsoft] token body: {}", body);
+
+    log::info!("[xbox] XBL status: {} | body: {}", status, body);
+
+    if !status.is_success() {
+        anyhow::bail!("Xbox Live devolvió {}: {}", status, body);
+    }
+
+    let xbl_resp: serde_json::Value =
+        serde_json::from_str(&body).context("Error parseando JSON XBL")?;
 
     let xbl_token = xbl_resp["Token"]
         .as_str()

@@ -4,6 +4,7 @@ export interface LoginStartResponse {
     device_code: string;
     interval: number;
     expires_in: number;
+    message: string;
 }
 
 export interface LoginCompleteResponse {

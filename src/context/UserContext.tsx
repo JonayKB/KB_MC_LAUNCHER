@@ -104,11 +104,11 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
         localStorage.removeItem(LS_KEY);
         setHasMinecraftOwnedState(null);
         setUsernameState(undefined);
+        setUuid(null);
+        setAccessToken(null);
     }
 
-    const isSetupDone =
-        (hasMinecraftOwned === false && !!username) ||
-        hasMinecraftOwned === true;
+    const isSetupDone = (hasMinecraftOwned === false && username !== undefined) || (hasMinecraftOwned === true && accessToken !== null);
 
     console.log('[UserContext] render — isSetupDone:', isSetupDone, '| isLoading:', isLoading);
 
