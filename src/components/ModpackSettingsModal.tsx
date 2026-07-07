@@ -1,16 +1,12 @@
 import { useState, useEffect } from 'react';
-import { ModpackSettings, DEFAULT_SETTINGS, RESOLUTIONS } from '../types/modpackSettings';
-import { modal } from '../types/modackSettingStyles';
+import { ModpackSettings, DEFAULT_SETTINGS, RESOLUTIONS, RecommendedSettings } from '../types/modpackSettings';
+import { modal } from '../styles/modackSettingStyles';
 import { invoke } from '@tauri-apps/api/core';
 import { CustomDropdown } from './CustomDropdown';
 
 const SETTINGS_KEY = (modpackId: string) => `kb_settings_${modpackId}`;
 
-interface RecommendedSettings {
-    min_ram_mb: number;
-    max_ram_mb: number;
-    extra_jvm_args: string;
-}
+
 
 export function loadSettings(modpackId: string): ModpackSettings {
     try {
@@ -76,6 +72,9 @@ export default function ModpackSettingsModal({ modpackId, modpackName, onClose, 
             minRamMb: recommended.min_ram_mb,
             maxRamMb: recommended.max_ram_mb,
             extraJvmArgs: recommended.extra_jvm_args,
+            windowWidth: recommended.window_width,
+            windowHeight: recommended.window_height,
+            fullscreen: recommended.fullscreen,
         }));
     }
 

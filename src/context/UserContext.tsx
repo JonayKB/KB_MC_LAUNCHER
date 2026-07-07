@@ -1,35 +1,26 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { Account } from '../types/account';
 
 interface UserContextValue {
-    hasMinecraftOwned: boolean | null;
-    setHasMinecraftOwned: (owned: boolean) => void;
-    username: string | undefined;
-    setUsername: (name: string) => void;
     isSetupDone: boolean;
     resetSetup: () => void;
     basePath: string | null;
     isLoading: boolean;
-    uuid: string | null;
-    setUuid: (uuid: string) => void;
-    accessToken: string | null;
-    setAccessToken: (token: string) => void;
+    accounts: Account[];
+    setAccounts: React.Dispatch<React.SetStateAction<Account[]>>;
 }
 
 const UserContext = createContext<UserContextValue>({
-    hasMinecraftOwned: null,
-    setHasMinecraftOwned: () => { },
-    username: undefined,
-    setUsername: () => { },
     isSetupDone: false,
     resetSetup: () => { },
     basePath: null,
     isLoading: true,
-    uuid: null,
-    setUuid: () => { },
-    accessToken: null,
-    setAccessToken: () => { },
+    accounts: [],
+    setAccounts: () => { },
+
 });
+
 
 export function useUser() {
     return useContext(UserContext);
@@ -37,18 +28,9 @@ export function useUser() {
 
 const LS_KEY = 'kb_launcher_user';
 
-interface PersistedUser {
-    hasMinecraftOwned: boolean | null;
-    username?: string;
-    uuid?: string;
-    accessToken?: string;
-}
 
 export function UserProvider({ children }: Readonly<{ children: React.ReactNode }>) {
-    const [hasMinecraftOwned, setHasMinecraftOwnedState] = useState<boolean | null>(null);
-    const [username, setUsernameState] = useState<string | undefined>(undefined);
-    const [uuid, setUuid] = useState<string | null>(null);
-    const [accessToken, setAccessToken] = useState<string | null>(null);
+    const [accounts, setAccounts] = useState<Account[]>([]);
     const [basePath, setBasePath] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
@@ -58,12 +40,9 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
             const raw = localStorage.getItem(LS_KEY);
             console.log('[UserContext] localStorage raw:', raw);
             if (raw) {
-                const data: PersistedUser = JSON.parse(raw);
+                const data: Account[] = JSON.parse(raw);
                 console.log('[UserContext] datos parseados:', data);
-                setHasMinecraftOwnedState(data.hasMinecraftOwned);
-                setUsernameState(data.username);
-                setUuid(data.uuid || null);
-                setAccessToken(data.accessToken || null);
+                setAccounts(data);
             } else {
                 console.log('[UserContext] localStorage vacío');
             }
@@ -82,50 +61,31 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
 
     // ── Persistir cambios ─────────────────────────────────────
     useEffect(() => {
-        console.log('[UserContext] intento persistir — hasMinecraftOwned:', hasMinecraftOwned, '| username:', username);
-        if (hasMinecraftOwned === null) {
-            console.log('[UserContext] → skip (hasMinecraftOwned null)');
+        console.log('[UserContext] intento persistir — accounts:', accounts);
+        if (accounts.length === 0) {
+            localStorage.removeItem(LS_KEY);
             return;
         }
-        const toSave = { hasMinecraftOwned, username, uuid, accessToken };
-        console.log('[UserContext] → guardando:', toSave);
-        localStorage.setItem(LS_KEY, JSON.stringify(toSave));
-    }, [hasMinecraftOwned, username, uuid, accessToken]);
-
-    function setHasMinecraftOwned(owned: boolean) {
-        setHasMinecraftOwnedState(owned);
-    }
-
-    function setUsername(name: string) {
-        setUsernameState(name);
-    }
+        localStorage.setItem(LS_KEY, JSON.stringify(accounts));
+    }, [accounts]);
 
     function resetSetup() {
         localStorage.removeItem(LS_KEY);
-        setHasMinecraftOwnedState(null);
-        setUsernameState(undefined);
-        setUuid(null);
-        setAccessToken(null);
+        setAccounts([]);
     }
 
-    const isSetupDone = (hasMinecraftOwned === false && username !== undefined) || (hasMinecraftOwned === true && accessToken !== null);
+    const isSetupDone = accounts.length > 0;
 
     console.log('[UserContext] render — isSetupDone:', isSetupDone, '| isLoading:', isLoading);
 
     return (
         <UserContext.Provider value={{
-            hasMinecraftOwned,
-            setHasMinecraftOwned,
-            username,
-            setUsername,
             isSetupDone,
             resetSetup,
             basePath,
             isLoading,
-            uuid,
-            setUuid,
-            accessToken,
-            setAccessToken,
+            accounts,
+            setAccounts,
         }}>
             {children}
         </UserContext.Provider>

@@ -1,10 +1,13 @@
 use serde::Serialize;
-
+use tauri::AppHandle;
+use tauri::Manager;
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemInfo {
     pub total_ram_mb: u64,
     pub cpu_cores: usize,
     pub os: String,
+    pub screen_height: u32,
+    pub screen_width: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -12,26 +15,73 @@ pub struct RecommendedSettings {
     pub min_ram_mb: u32,
     pub max_ram_mb: u32,
     pub extra_jvm_args: String,
-    pub total_ram_mb: u64,  
+    pub total_ram_mb: u64,
+    pub window_width: u32,   
+    pub window_height: u32,
+    pub fullscreen: bool,
 }
 
 
-pub fn get_system_info() -> SystemInfo {
-    let raw_ram_mb   = get_total_ram_mb();
-    let total_ram_mb = ((raw_ram_mb + 512) / 1024) * 1024;
+pub fn get_system_info(app: &AppHandle) -> SystemInfo {
+    let total_ram_mb = get_total_ram_mb();
+    let total_ram_mb = ((total_ram_mb + 512) / 1024) * 1024;
+    let cpu_cores    = num_cpus::get();
+    let os           = std::env::consts::OS.to_string();
 
-    let cpu_cores = num_cpus::get();
-    let os        = std::env::consts::OS.to_string();
+    let (screen_width, screen_height) = get_primary_screen_size(app);
 
     log::info!(
-        "[sysinfo] RAM física: {}MB → redondeada: {}MB | Cores: {} | OS: {}",
-        raw_ram_mb, total_ram_mb, cpu_cores, os
+        "[sysinfo] RAM: {}MB | Cores: {} | OS: {} | Pantalla: {}x{}",
+        total_ram_mb, cpu_cores, os, screen_width, screen_height
     );
 
-    SystemInfo { total_ram_mb, cpu_cores, os }
+    SystemInfo { total_ram_mb, cpu_cores, os, screen_width, screen_height }
+}
+
+fn get_primary_screen_size(app: &AppHandle) -> (u32, u32) {
+    if let Some(window) = app.get_webview_window("main") {
+        if let Ok(monitors) = window.available_monitors() {
+            if let Some(primary) = monitors.iter().find(|m| {
+                true
+            }) {
+                let size = primary.size();
+                let (w, h) = (size.width, size.height);
+                log::info!("[sysinfo] Pantalla principal: {}x{}", w, h);
+                return (w, h);
+            }
+        }
+    }
+
+    log::warn!("[sysinfo] No se pudo obtener resolución, usando 1920x1080");
+    (1920, 1080)
+}
+fn recommend_resolution(screen_w: u32, screen_h: u32) -> (u32, u32) {
+    // Buscar el preset más cercano al 75% de la pantalla
+    let target_w = (screen_w as f32 * 0.75) as u32;
+    let target_h = (screen_h as f32 * 0.75) as u32;
+
+    // Presets estándar ordenados de mayor a menor
+    let presets = [
+        (2560, 1440),
+        (1920, 1080),
+        (1600, 900),
+        (1280, 720),
+        (854,  480),
+    ];
+
+    // Usar el preset más grande que quepa en el 75% de la pantalla
+    for (w, h) in presets {
+        if w <= target_w && h <= target_h {
+            return (w, h);
+        }
+    }
+
+    // Fallback: 854x480
+    (854, 480)
 }
 pub fn recommend_settings(info: &SystemInfo) -> RecommendedSettings {
     let total = info.total_ram_mb;
+let (window_width, window_height) = recommend_resolution(info.screen_width, info.screen_height);
 
     // Max RAM: 50% de la RAM total directamente
     // Mínimo 2GB, máximo 16GB
@@ -107,12 +157,15 @@ if max_ram_mb < 7680 {
 
     log::info!("[sysinfo] {} args JVM generados", args.len());
 
-    RecommendedSettings {
-        min_ram_mb,
-        max_ram_mb,
-        extra_jvm_args: args.join(" "),
-        total_ram_mb: total,
-    }
+RecommendedSettings {
+    min_ram_mb,
+    max_ram_mb,
+    extra_jvm_args: args.join(" "),
+    total_ram_mb: total,
+    window_width,  
+    window_height, 
+    fullscreen: false,
+}
 
 }
 

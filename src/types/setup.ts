@@ -12,4 +12,6 @@ export interface LoginCompleteResponse {
     username: string;
     access_token: string;
     skin_head_base64?: string;
+    refresh_token: string;
+    expires_in: number;
 }

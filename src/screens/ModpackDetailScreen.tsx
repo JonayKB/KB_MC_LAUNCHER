@@ -8,7 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { formatBytes, formatSpeed, InstallProgress } from "../types/installer";
 import { useUser } from "../context/UserContext";
 import { ask } from '@tauri-apps/plugin-dialog';
-import { ModpackSettings } from "../types/modpackSettings";
+import { ModpackSettings, RecommendedSettings } from "../types/modpackSettings";
 import ModpackSettingsModal, { loadSettings } from "../components/ModpackSettingsModal";
 const IMAGE_ROTATE_MS = 6000;
 
@@ -24,9 +24,6 @@ interface ProgressState {
     mode: 'step' | 'download' | 'extract';
 }
 
-function handleRepair(modpack: ModpackVersion) {
-    console.log(`Reparando modpack ${modpack.modpackId}...`);
-}
 
 export default function ModpackDetailScreen() {
     const { id } = useParams<{ id: string }>();
@@ -43,7 +40,7 @@ export default function ModpackDetailScreen() {
     const unlistenRef = useRef<UnlistenFn | null>(null);
     const location = useLocation();
     const name = (location.state as { name?: string } | null)?.name;
-    const { basePath, username } = useUser();
+    const { basePath, accounts } = useUser();
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [modpackSettings, setModpackSettings] = useState<ModpackSettings | null>(null);
     // Fetch modpack data
@@ -112,6 +109,29 @@ export default function ModpackDetailScreen() {
         if (!basePath) {
             console.error('basePath no disponible todavía');
             return;
+        }
+        // Aplicar settings recomendados si el usuario no tiene los suyos
+        if (!modpackSettings || !localStorage.getItem(`kb_settings_${modpack.modpackId}`)) {
+            try {
+                const recommended = await invoke<RecommendedSettings>('get_recommended_settings');
+                const autoSettings: ModpackSettings = {
+                    minRamMb: recommended.min_ram_mb,
+                    maxRamMb: recommended.max_ram_mb,
+                    fullscreen: recommended.fullscreen,
+                    windowWidth: recommended.window_width,
+                    windowHeight: recommended.window_height,
+                    extraJvmArgs: recommended.extra_jvm_args,
+                };
+                // Guardar y aplicar
+                localStorage.setItem(
+                    `kb_settings_${modpack.modpackId}`,
+                    JSON.stringify(autoSettings)
+                );
+                setModpackSettings(autoSettings);
+                console.log('[install] Settings recomendados aplicados automáticamente:', autoSettings);
+            } catch (err) {
+                console.warn('[install] No se pudieron obtener settings recomendados:', err);
+            }
         }
 
         setInstalling(true);
@@ -207,12 +227,12 @@ export default function ModpackDetailScreen() {
                 modpackId: modpack.modpackId,
                 mcVersion: modpack.minecraftVersion,
                 forgeVersion: modpack.forgeVersion,
-                username: username ?? 'Player',
+                username: accounts.find(a => a.isActual)?.username ?? 'Player',
                 minRamMb: s?.minRamMb ?? 512,
                 maxRamMb: s?.maxRamMb ?? 4096,
-                fullscreen: s?.fullscreen ?? false,
-                windowWidth: s?.windowWidth ?? 1280,
-                windowHeight: s?.windowHeight ?? 720,
+                fullscreen: s?.fullscreen ?? true,
+                windowWidth: s?.windowWidth ?? 1920,
+                windowHeight: s?.windowHeight ?? 1080,
                 extraJvmArgs: s?.extraJvmArgs ?? '',
             });
         } catch (err) {
@@ -237,11 +257,6 @@ export default function ModpackDetailScreen() {
     const isBusy = installing || launching;
 
     const menuItems = [
-        {
-            id: 'repair', label: 'Reparar', requiresInstall: true,
-            onClick: () => handleRepair(modpack),
-            icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>,
-        },
         {
             id: 'uninstall', label: 'Desinstalar', requiresInstall: true, danger: true,
             onClick: () => handleUninstall(modpack),

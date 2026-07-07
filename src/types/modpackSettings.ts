@@ -23,3 +23,12 @@ export const RESOLUTIONS = [
   { label: '2560 × 1440 (1440p)', width: 2560, height: 1440 },
   { label: 'Personalizado', width: 0, height: 0 },
 ];
+
+export interface RecommendedSettings {
+    min_ram_mb: number;
+    max_ram_mb: number;
+    extra_jvm_args: string;
+    window_width: number;
+    window_height: number;
+    fullscreen: boolean;
+}

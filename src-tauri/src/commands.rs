@@ -25,8 +25,8 @@ pub struct LoginCompleteResponse {
 }
 
 #[tauri::command]
-pub fn get_recommended_settings() -> RecommendedSettings {
-    let info = get_system_info();
+pub fn get_recommended_settings(app: tauri::AppHandle) -> RecommendedSettings {
+    let info = get_system_info(&app);
     let rec = recommend_settings(&info);
     log::info!(
         "[commands::get_recommended_settings] min:{}MB max:{}MB, Argumentos recomendados: {:?}",

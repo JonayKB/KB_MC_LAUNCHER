@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { useUser } from '../context/UserContext';
 import { layout, logo, header, box, text, btn, input as inp } from '../styles/components';
 import { invoke } from '@tauri-apps/api/core';
-import { LoginCompleteResponse, LoginStartResponse } from '../types/setup';
+import { LoginCompleteResponse } from '../types/setup';
 
 type Step = 'owns_minecraft' | 'offline_username' | 'microsoft_prompt';
 
 export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () => void }>) {
-    const { setHasMinecraftOwned, setUsername, setUuid, setAccessToken } = useUser();
+    const { setAccounts } = useUser();
     const [step, setStep] = useState<Step>('owns_minecraft');
     const [inputUsername, setInputUsername] = useState('');
     const [inputError, setInputError] = useState<string | null>(null);
@@ -18,7 +18,6 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
     const [loginError, setLoginError] = useState<string | null>(null);
 
     function handleOwnsMinecraft(owns: boolean) {
-        setHasMinecraftOwned(owns);
         setStep(owns ? 'microsoft_prompt' : 'offline_username');
     }
     async function handleMicrosoftLogin() {
@@ -30,9 +29,16 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
                     'auth_microsoft'
                 );
 
-            setUsername(result.username);
-            setUuid(result.uuid);
-            setAccessToken(result.access_token);
+            const userAccount = {
+                isOnline: true,
+                username: result.username,
+                uuid: result.uuid,
+                accessToken: result.access_token,
+                refreshToken: result.refresh_token,
+                expiresIn: result.expires_in,
+                isActual: true
+            };
+            setAccounts([userAccount]);
 
             setLoginState('done');
 
@@ -52,7 +58,12 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
             setInputError('Solo letras, números y guiones bajos');
             return;
         }
-        setUsername(name);
+        const userAccount = {
+            isOnline: false,
+            username: name,
+            isActual: true
+        };
+        setAccounts([userAccount]);
         onComplete();
     }
     return (
