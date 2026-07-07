@@ -9,6 +9,11 @@ pub struct LaunchSettings {
     pub window_width: u32,
     pub window_height: u32,
     pub extra_jvm_args: String,
+    // ── Auth ──────────────────────────────────────────────
+    pub username: String,
+    pub uuid: String,
+    pub access_token: String,
+    pub is_online: bool,
 }
 impl Default for LaunchSettings {
     fn default() -> Self {
@@ -19,6 +24,10 @@ impl Default for LaunchSettings {
             window_width: 1280,
             window_height: 720,
             extra_jvm_args: String::new(),
+            username: "Player".to_string(),
+            uuid: "0".to_string(),
+            access_token: "0".to_string(),
+            is_online: false,
         }
     }
 }
@@ -27,7 +36,6 @@ pub async fn launch(
     modpack_id: String,
     mc_version: String,
     forge_version: String,
-    username: String,
     settings: LaunchSettings,
 ) -> Result<()> {
     let base = Path::new(&base_path);
@@ -193,7 +201,7 @@ pub async fn launch(
                     &instance_dir,
                     &libs_dir,
                     &mc_version,
-                    &username,
+                    &settings.username,
                 );
                 if !resolved.is_empty() {
                     jvm_args.push(resolved);
@@ -215,7 +223,7 @@ pub async fn launch(
                         &instance_dir,
                         &libs_dir,
                         &mc_version,
-                        &username,
+                        &settings.username,
                     );
                     if !resolved.is_empty() {
                         jvm_args.push(resolved);
@@ -235,7 +243,7 @@ pub async fn launch(
                                 &instance_dir,
                                 &libs_dir,
                                 &mc_version,
-                                &username,
+                                &settings.username,
                             );
                             if !resolved.is_empty() {
                                 jvm_args.push(resolved);
@@ -253,7 +261,7 @@ pub async fn launch(
     // ── Game args ─────────────────────────────────────────────
     let mut game_args: Vec<String> = vec![
         "--username".to_string(),
-        username.clone(),
+        settings.username.clone(),
         "--version".to_string(),
         forge_id.clone(),
         "--gameDir".to_string(),
@@ -263,11 +271,11 @@ pub async fn launch(
         "--assetIndex".to_string(),
         mc_version.clone(),
         "--uuid".to_string(),
-        "0".to_string(),
+        settings.uuid.clone(),
         "--accessToken".to_string(),
-        "0".to_string(),
+        settings.access_token.clone(),
         "--userType".to_string(),
-        "legacy".to_string(),
+        if settings.is_online { "msa" } else { "legacy" }.to_string(),
         "--versionType".to_string(),
         "release".to_string(),
     ];
@@ -297,7 +305,7 @@ pub async fn launch(
                     &instance_dir,
                     &libs_dir,
                     &mc_version,
-                    &username,
+                    &settings.username,
                 );
                 game_args.push(resolved);
             }

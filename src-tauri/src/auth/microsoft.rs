@@ -6,10 +6,13 @@ use oauth2::{
 };
 use std::collections::HashMap;
 use tokio::sync::oneshot;
-
+pub struct MicrosoftTokens {
+    pub access_token: String,
+    pub refresh_token: String,
+}
 pub const CLIENT_ID: &str = "85d576e3-a3f9-41da-96f9-afdbe46cefc8";
 
-pub async fn login() -> Result<String> {
+pub async fn login() -> Result<MicrosoftTokens> {
     let client = BasicClient::new(ClientId::new(CLIENT_ID.to_string()))
         .set_auth_uri(AuthUrl::new(
             "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize".to_string(),
@@ -73,5 +76,18 @@ pub async fn login() -> Result<String> {
         .await
         .context("Error obteniendo token Microsoft")?;
 
-    Ok(token.access_token().secret().to_string())
+    let access_token = token.access_token().secret().to_string();
+    let refresh_token = token
+        .refresh_token()
+        .map(|t| t.secret().to_string())
+        .context(
+            "Microsoft no devolvió refresh_token — asegúrate de tener el scope offline_access",
+        )?;
+
+    log::info!("[microsoft] ✓ access_token y refresh_token obtenidos");
+
+    Ok(MicrosoftTokens {
+        access_token,
+        refresh_token,
+    })
 }

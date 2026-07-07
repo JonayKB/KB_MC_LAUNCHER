@@ -7,21 +7,13 @@ use tauri::AppHandle;
 use tauri::Manager;
 
 #[derive(serde::Serialize)]
-pub struct LoginStartResponse {
-    pub user_code: String,
-    pub verification_uri: String,
-    pub device_code: String,
-    pub interval: u64,
-    pub expires_in: u64,
-    pub message: String,
-}
-
-#[derive(serde::Serialize)]
 pub struct LoginCompleteResponse {
     pub uuid: String,
     pub username: String,
     pub access_token: String,
     pub skin_head_base64: Option<String>,
+    pub expires_in: u64,
+    pub refresh_token: String,
 }
 
 #[tauri::command]
@@ -100,7 +92,12 @@ pub async fn launch_modpack(
     modpack_id: String,
     mc_version: String,
     forge_version: String,
+    // Auth
     username: String,
+    uuid: String,
+    access_token: String,
+    is_online: bool,
+    // Settings
     min_ram_mb: Option<u32>,
     max_ram_mb: Option<u32>,
     fullscreen: Option<bool>,
@@ -115,18 +112,15 @@ pub async fn launch_modpack(
         window_width: window_width.unwrap_or(1280),
         window_height: window_height.unwrap_or(720),
         extra_jvm_args: extra_jvm_args.unwrap_or_default(),
+        username,
+        uuid,
+        access_token,
+        is_online,
     };
 
-    launch(
-        base_path,
-        modpack_id,
-        mc_version,
-        forge_version,
-        username,
-        settings,
-    )
-    .await
-    .map_err(|e| e.to_string())
+    launch(base_path, modpack_id, mc_version, forge_version, settings)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -226,11 +220,11 @@ pub async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn auth_microsoft() -> Result<LoginCompleteResponse, String> {
-    let ms_token = microsoft::login().await.map_err(|e| e.to_string())?;
+    let ms_tokens = microsoft::login().await.map_err(|e| e.to_string())?;
 
     let client = reqwest::Client::new();
 
-    let xbox = xbox::authenticate(&client, &ms_token)
+    let xbox = xbox::authenticate(&client, &ms_tokens.access_token)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -243,5 +237,7 @@ pub async fn auth_microsoft() -> Result<LoginCompleteResponse, String> {
         username: profile.username,
         access_token: profile.access_token,
         skin_head_base64: None,
+        expires_in: profile.expires_in,
+        refresh_token: ms_tokens.refresh_token,
     })
 }

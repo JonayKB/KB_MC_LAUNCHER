@@ -9,6 +9,7 @@ pub struct MinecraftProfile {
     pub username: String,
     pub access_token: String,
     pub skin_url: Option<String>,
+    pub expires_in: u64,
 }
 
 pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result<MinecraftProfile> {
@@ -104,7 +105,21 @@ pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result
         .and_then(|skins| skins.iter().find(|s| s["state"].as_str() == Some("ACTIVE")))
         .and_then(|skin| skin["url"].as_str())
         .map(|s| s.to_string());
-
+    let expires_in = match mc_resp["expiresIn"].as_u64() {
+        Some(v) => {
+            log::info!(
+                "[minecraft] expiresIn del token: {} segundos ({} horas)",
+                v,
+                v / 3600
+            );
+            v
+        }
+        None => {
+            log::warn!("[minecraft] expiresIn no encontrado en la respuesta, usando fallback de 86400s (24h)");
+            log::debug!("[minecraft] mc_resp completo: {}", mc_resp);
+            86400
+        }
+    };
     log::info!(
         "[minecraft] ✓ Perfil obtenido — username: {} | uuid: {}",
         username,
@@ -116,5 +131,6 @@ pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result
         username,
         access_token,
         skin_url,
+        expires_in,
     })
 }

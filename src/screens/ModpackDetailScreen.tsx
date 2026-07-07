@@ -220,19 +220,25 @@ export default function ModpackDetailScreen() {
         if (!basePath) return;
         setLaunching(true);
         setLaunchError(null);
+
         const s = modpackSettings;
+        const account = accounts.find(a => a.isActual);
+
         try {
             await invoke('launch_modpack', {
                 basePath,
                 modpackId: modpack.modpackId,
                 mcVersion: modpack.minecraftVersion,
                 forgeVersion: modpack.forgeVersion,
-                username: accounts.find(a => a.isActual)?.username ?? 'Player',
+                username: account?.username ?? 'Player',
+                uuid: account?.uuid ?? '00000000-0000-0000-0000-000000000000',
+                accessToken: account?.accessToken ?? '0',
+                isOnline: account?.isOnline ?? false,
                 minRamMb: s?.minRamMb ?? 512,
                 maxRamMb: s?.maxRamMb ?? 4096,
-                fullscreen: s?.fullscreen ?? true,
-                windowWidth: s?.windowWidth ?? 1920,
-                windowHeight: s?.windowHeight ?? 1080,
+                fullscreen: s?.fullscreen ?? false,
+                windowWidth: s?.windowWidth ?? 1280,
+                windowHeight: s?.windowHeight ?? 720,
                 extraJvmArgs: s?.extraJvmArgs ?? '',
             });
         } catch (err) {
