@@ -3,6 +3,7 @@ import { useUser } from '../context/UserContext';
 import { layout, logo, header, box, text, btn, input as inp } from '../styles/components';
 import { invoke } from '@tauri-apps/api/core';
 import { LoginCompleteResponse } from '../types/setup';
+import { Account } from '../types/account';
 
 type Step = 'owns_minecraft' | 'offline_username' | 'microsoft_prompt';
 
@@ -35,9 +36,9 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
                 uuid: result.uuid,
                 accessToken: result.access_token,
                 refreshToken: result.refresh_token,
-                expiresIn: result.expires_in,
+                tokenExpiresAt: Date.now() + result.expires_in * 1000,
                 isActual: true
-            };
+            } as Account;
             setAccounts([userAccount]);
 
             setLoginState('done');

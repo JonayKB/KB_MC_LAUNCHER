@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Account } from '../types/account';
+import { LoginCompleteResponse } from '../types/setup';
 
 interface UserContextValue {
     isSetupDone: boolean;
@@ -27,6 +28,7 @@ export function useUser() {
 }
 
 const LS_KEY = 'kb_launcher_user';
+const ONE_HOUR_MS = 60 * 60 * 1000;
 
 
 export function UserProvider({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -36,20 +38,69 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
 
     // ── Cargar desde localStorage (una sola vez) ──────────────
     useEffect(() => {
-        try {
-            const raw = localStorage.getItem(LS_KEY);
-            console.log('[UserContext] localStorage raw:', raw);
-            if (raw) {
-                const data: Account[] = JSON.parse(raw);
-                console.log('[UserContext] datos parseados:', data);
-                setAccounts(data);
-            } else {
-                console.log('[UserContext] localStorage vacío');
+        const init = async () => {
+            try {
+                const raw = localStorage.getItem(LS_KEY);
+                if (!raw) {
+                    setIsLoading(false);
+                    return;
+                }
+
+                let loadedAccounts: Account[] = JSON.parse(raw);
+                console.log('[UserContext] Cuentas cargadas:', loadedAccounts.length);
+
+                // Refrescar tokens caducados o próximos a caducar
+                const refreshed = await Promise.all(
+                    loadedAccounts.map(async (account) => {
+                        if (!account.isOnline || !account.refreshToken) return account;
+
+                        const expiresAt = account.tokenExpiresAt ?? 0;
+                        const needsRefresh = expiresAt - Date.now() < ONE_HOUR_MS;
+
+                        if (!needsRefresh) {
+                            console.log(`[UserContext] Token de ${account.username} válido`);
+                            return account;
+                        }
+
+                        console.log(`[UserContext] Renovando token de ${account.username}...`);
+                        try {
+                            const result = await invoke<LoginCompleteResponse>('auth_refresh', {
+                                refreshToken: account.refreshToken,
+                            });
+
+                            const updated: Account = {
+                                ...account,
+                                accessToken: result.access_token,
+                                refreshToken: result.refresh_token,
+                                uuid: result.uuid,
+                                username: result.username,
+                                tokenExpiresAt: Date.now() + result.expires_in * 1000,
+                            };
+
+                            console.log(`[UserContext] ✓ Token de ${account.username} renovado`);
+                            return updated;
+                        } catch (err) {
+                            console.error(`[UserContext] Error renovando token de ${account.username}:`, err);
+                            // Si falla el refresh (token expirado tras 90 días),
+                            // marcar como inválido para que el usuario haga login de nuevo
+                            return {
+                                ...account,
+                                accessToken: undefined,
+                                isActual: false,
+                            } as Account;
+                        }
+                    })
+                );
+
+                setAccounts(refreshed);
+            } catch (e) {
+                console.error('[UserContext] Error en init:', e);
             }
-        } catch (e) {
-            console.error('[UserContext] error leyendo localStorage:', e);
-        }
-        setIsLoading(false);
+
+            setIsLoading(false);
+        };
+
+        init();
     }, []);
 
     // ── Obtener basePath desde Rust ───────────────────────────

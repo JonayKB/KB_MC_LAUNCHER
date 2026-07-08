@@ -4,6 +4,7 @@ export interface Account {
     uuid?: string;
     accessToken?: string;
     refreshToken?: string;
-    expiresIn?: number;
+    tokenExpiresAt?: number;
     isActual: boolean;
+    skinHeadBase64?: string;
 }

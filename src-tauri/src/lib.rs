@@ -72,7 +72,8 @@ pub fn run() {
             commands::get_recommended_settings,
             commands::clear_all_cache,
             commands::restart_app,
-            commands::auth_microsoft
+            commands::auth_microsoft,
+            commands::auth_refresh,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

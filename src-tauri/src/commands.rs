@@ -232,12 +232,51 @@ pub async fn auth_microsoft() -> Result<LoginCompleteResponse, String> {
         .await
         .map_err(|e| e.to_string())?;
 
+    let skin_head_base64 = if let Some(ref url) = profile.skin_url {
+        skin::get_head_base64(url).await.ok()
+    } else {
+        None
+    };
+
     Ok(LoginCompleteResponse {
         uuid: profile.uuid,
         username: profile.username,
         access_token: profile.access_token,
-        skin_head_base64: None,
+        skin_head_base64,
         expires_in: profile.expires_in,
         refresh_token: ms_tokens.refresh_token,
+    })
+}
+
+#[tauri::command]
+pub async fn auth_refresh(refresh_token: String) -> Result<LoginCompleteResponse, String> {
+    log::info!("[commands::auth_refresh] Renovando sesión...");
+    let client = reqwest::Client::new();
+
+    let ms_tokens = crate::auth::microsoft::refresh_ms_token(&client, &refresh_token)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let xbox = crate::auth::xbox::authenticate(&client, &ms_tokens.access_token)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let profile = crate::auth::minecraft::authenticate(&client, &xbox)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let skin_head_base64 = if let Some(ref url) = profile.skin_url {
+        crate::auth::skin::get_head_base64(url).await.ok()
+    } else {
+        None
+    };
+
+    Ok(LoginCompleteResponse {
+        uuid: profile.uuid,
+        username: profile.username,
+        access_token: profile.access_token,
+        refresh_token: ms_tokens.refresh_token,
+        skin_head_base64,
+        expires_in: profile.expires_in,
     })
 }

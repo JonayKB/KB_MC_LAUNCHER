@@ -91,3 +91,41 @@ pub async fn login() -> Result<MicrosoftTokens> {
         refresh_token,
     })
 }
+
+pub async fn refresh_ms_token(
+    client: &reqwest::Client,
+    refresh_token: &str,
+) -> Result<MicrosoftTokens> {
+    log::info!("[microsoft] Renovando token con refresh_token...");
+
+    let resp = client
+        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+        .form(&[
+            ("client_id",     CLIENT_ID),
+            ("grant_type",    "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("scope",         "XboxLive.signin offline_access"),
+        ])
+        .send()
+        .await
+        .context("Error renovando token")?;
+
+    let status = resp.status();
+    let body = resp.text().await.context("Error leyendo respuesta")?;
+    log::info!("[microsoft] refresh status: {} | body: {}", status, body);
+
+    if !status.is_success() {
+        anyhow::bail!("Error renovando token MS: {}", body);
+    }
+
+    let json: serde_json::Value = serde_json::from_str(&body)
+        .context("Error parseando token renovado")?;
+
+    let access_token = json["access_token"]
+        .as_str().context("access_token no encontrado")?.to_string();
+    let refresh_token = json["refresh_token"]
+        .as_str().context("refresh_token no encontrado")?.to_string();
+
+    log::info!("[microsoft] ✓ Token renovado");
+    Ok(MicrosoftTokens { access_token, refresh_token })
+}
