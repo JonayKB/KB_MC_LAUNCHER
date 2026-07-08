@@ -127,7 +127,6 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
 
     const isSetupDone = accounts.length > 0;
 
-    console.log('[UserContext] render — isSetupDone:', isSetupDone, '| isLoading:', isLoading);
 
     return (
         <UserContext.Provider value={{
