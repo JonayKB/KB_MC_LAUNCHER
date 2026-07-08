@@ -5,6 +5,7 @@ use crate::launcher::{launch, LaunchSettings};
 use std::path::Path;
 use tauri::AppHandle;
 use tauri::Manager;
+use tauri::Window;
 
 #[derive(serde::Serialize)]
 pub struct LoginCompleteResponse {
@@ -219,8 +220,8 @@ pub async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn auth_microsoft() -> Result<LoginCompleteResponse, String> {
-    let ms_tokens = microsoft::login().await.map_err(|e| e.to_string())?;
+pub async fn auth_microsoft(window: Window) -> Result<LoginCompleteResponse, String> {
+    let ms_tokens = microsoft::login(window).await.map_err(|e| e.to_string())?;
 
     let client = reqwest::Client::new();
 
@@ -237,6 +238,11 @@ pub async fn auth_microsoft() -> Result<LoginCompleteResponse, String> {
     } else {
         None
     };
+    log::info!(
+        "[commands::auth_microsoft] ✓ Login completo: {} ({})",
+        profile.username,
+        profile.uuid
+    );
 
     Ok(LoginCompleteResponse {
         uuid: profile.uuid,

@@ -8,6 +8,7 @@ import { LoginCompleteResponse } from '../types/setup';
 
 // ── Avatar ────────────────────────────────────────────────────
 function Avatar({ src, username, size = 32 }: { src?: string; username?: string; size?: number }) {
+    console.log('Avatar src:', src, 'username:', username, 'size:', size);
     if (src) {
         return <img src={src} alt={username} style={{ ...s.avatar, width: size, height: size }} />;
     }
@@ -36,11 +37,21 @@ function AddAccountModal({
     const [offHovered, setOffHovered] = useState(false);
     const [btnHovered, setBtnHovered] = useState(false);
     const [backHovered, setBackHovered] = useState(false);
+    const { accounts } = useUser();
+    const [loginError, setLoginError] = useState<string | null>(null);
 
     async function handleMicrosoftLogin() {
         setLoading(true);
+        setLoginError(null);
         try {
             const result = await invoke<LoginCompleteResponse>('auth_microsoft');
+
+            if (accounts.some(a => a.uuid === result.uuid)) {
+                setLoginError('Ya tienes una cuenta con ese usuario');
+                setStep('choose');
+                return;
+            }
+
             onAdded({
                 isOnline: true,
                 username: result.username,
@@ -53,6 +64,8 @@ function AddAccountModal({
             });
         } catch (err) {
             console.error('[AddAccount] Error login Microsoft:', err);
+            setLoginError(`Error al iniciar sesión: ${err}`);
+            setStep('choose');
         } finally {
             setLoading(false);
         }
@@ -68,6 +81,14 @@ function AddAccountModal({
             setNameError('Solo letras, números y guiones bajos');
             return;
         }
+        // Comprobar si ya existe una cuenta con ese username
+        const alreadyExists = accounts.some(
+            a => a.username?.toLowerCase() === name.toLowerCase()
+        );
+        if (alreadyExists) {
+            setNameError('Ya tienes una cuenta con ese nombre');
+            return;
+        }
         onAdded({
             isOnline: false,
             username: name,
@@ -75,6 +96,7 @@ function AddAccountModal({
             isActual: true,
         });
     }
+
 
     return (
         <div style={s.backdrop} onClick={onClose}>
@@ -104,6 +126,19 @@ function AddAccountModal({
                     {/* ── Elegir tipo ── */}
                     {step === 'choose' && (
                         <>
+                            {loginError && (
+                                <div style={{
+                                    padding: '10px 14px',
+                                    background: 'var(--accent-dim)',
+                                    border: '1px solid var(--accent-border)',
+                                    borderRadius: 'var(--radius-md)',
+                                    fontSize: '12px',
+                                    color: 'var(--accent)',
+                                    lineHeight: 1.4,
+                                }}>
+                                    {loginError}
+                                </div>
+                            )}
                             <button
                                 style={s.optionBtn(msHovered)}
                                 onMouseEnter={() => setMsHovered(true)}

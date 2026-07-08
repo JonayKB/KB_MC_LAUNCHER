@@ -37,6 +37,7 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
                 accessToken: result.access_token,
                 refreshToken: result.refresh_token,
                 tokenExpiresAt: Date.now() + result.expires_in * 1000,
+                skinHeadBase64: result.skin_head_base64,
                 isActual: true
             } as Account;
             setAccounts([userAccount]);

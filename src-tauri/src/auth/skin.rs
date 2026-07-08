@@ -61,6 +61,7 @@ pub async fn get_head_png(skin_url: &str) -> Result<Vec<u8>> {
 /// Devuelve la cabeza como base64 para pasarla al frontend
 pub async fn get_head_base64(skin_url: &str) -> Result<String> {
     let png = get_head_png(skin_url).await?;
+    log::info!("[skin] ✓ Cabeza convertida a base64 ({} bytes)", png.len());
     Ok(format!("data:image/png;base64,{}", base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
         &png
