@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde_json::json;
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug)]
 pub struct XboxTokens {
@@ -10,7 +11,7 @@ pub struct XboxTokens {
 
 pub async fn authenticate(client: &reqwest::Client, ms_access_token: &str) -> Result<XboxTokens> {
     // ── 1. Xbox Live ──────────────────────────────────────────
-    log::info!("[xbox] Autenticando con Xbox Live...");
+    info!("[xbox] Autenticando con Xbox Live...");
 
     let resp = client
         .post("https://user.auth.xboxlive.com/user/authenticate")
@@ -31,9 +32,6 @@ pub async fn authenticate(client: &reqwest::Client, ms_access_token: &str) -> Re
 
     let status = resp.status();
     let body = resp.text().await.context("Error leyendo respuesta XBL")?;
-    log::info!("[microsoft] token body: {}", body);
-
-    log::info!("[xbox] XBL status: {} | body: {}", status, body);
 
     if !status.is_success() {
         anyhow::bail!("Xbox Live devolvió {}: {}", status, body);
@@ -52,10 +50,10 @@ pub async fn authenticate(client: &reqwest::Client, ms_access_token: &str) -> Re
         .context("UserHash XBL no encontrado")?
         .to_string();
 
-    log::info!("[xbox] ✓ Token XBL obtenido");
+    info!("[xbox] ✓ Token XBL obtenido");
 
     // ── 2. XSTS ───────────────────────────────────────────────
-    log::info!("[xbox] Obteniendo token XSTS...");
+    info!("[xbox] Obteniendo token XSTS...");
 
     let xsts_resp = client
         .post("https://xsts.auth.xboxlive.com/xsts/authorize")
@@ -96,7 +94,7 @@ pub async fn authenticate(client: &reqwest::Client, ms_access_token: &str) -> Re
         .context("Token XSTS no encontrado")?
         .to_string();
 
-    log::info!("[xbox] ✓ Token XSTS obtenido");
+    info!("[xbox] ✓ Token XSTS obtenido");
 
     Ok(XboxTokens {
         xbl_token,

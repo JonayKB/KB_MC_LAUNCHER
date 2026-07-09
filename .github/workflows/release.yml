@@ -144,7 +144,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ needs.create-tag.outputs.tag }}
-          releaseName: 'KB MC LAUNCHER ${{ needs.create-tag.outputs.tag }}'
+          releaseName: '${{ needs.create-tag.outputs.tag }}'
           releaseBody: 'Nueva versión'
           releaseDraft: true
           prerelease: false

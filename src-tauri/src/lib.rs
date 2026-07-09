@@ -5,8 +5,11 @@ mod commands;
 mod installer;
 mod launcher;
 mod auth;
+mod logging;
 use std::collections::HashMap;
 use std::sync::Mutex;
+
+use crate::logging::init_logging;
 #[derive(Default)]
 pub struct RunningInstances {
     pub processes: Mutex<HashMap<String, u32>>, // modpack_id -> pid
@@ -14,6 +17,8 @@ pub struct RunningInstances {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    init_logging();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
@@ -64,10 +69,10 @@ pub fn run() {
 
             Ok(())
         })
-        .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        
         .invoke_handler(tauri::generate_handler![
             commands::install_modpack,
             commands::fetch_text,

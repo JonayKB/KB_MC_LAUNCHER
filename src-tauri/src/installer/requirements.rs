@@ -2,6 +2,8 @@ use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
 use tokio::process::Command;
+use tracing::{debug, error, info, warn};
+
 async fn find_java_in_system() -> Option<String> {
     // 1. Intentar PATH primero
     let in_path = Command::new("java")
@@ -12,11 +14,11 @@ async fn find_java_in_system() -> Option<String> {
         .unwrap_or(false);
 
     if in_path {
-        log::info!("[requirements::find_java_in_system] Java encontrado en PATH");
+        info!("[requirements::find_java_in_system] Java encontrado en PATH");
         return Some("java".to_string());
     }
 
-    log::debug!(
+    debug!(
         "[requirements::find_java_in_system] Java no en PATH, buscando en ubicaciones conocidas..."
     );
 
@@ -130,7 +132,7 @@ async fn find_java_in_system() -> Option<String> {
         if !candidate.exists() {
             continue;
         }
-        log::debug!(
+        debug!(
             "[requirements::find_java_in_system] Probando: {:?}",
             candidate
         );
@@ -138,7 +140,7 @@ async fn find_java_in_system() -> Option<String> {
         match result {
             Ok(out) if !out.stderr.is_empty() || !out.stdout.is_empty() => {
                 let path_str = candidate.to_string_lossy().to_string();
-                log::info!(
+                info!(
                     "[requirements::find_java_in_system] Java encontrado en: {}",
                     path_str
                 );
@@ -148,9 +150,7 @@ async fn find_java_in_system() -> Option<String> {
         }
     }
 
-    log::warn!(
-        "[requirements::find_java_in_system] Java no encontrado en ninguna ubicación conocida"
-    );
+    warn!("[requirements::find_java_in_system] Java no encontrado en ninguna ubicación conocida");
     None
 }
 fn get_required_java_version(mc_version: &str) -> &'static str {
@@ -164,7 +164,7 @@ fn get_required_java_version(mc_version: &str) -> &'static str {
 }
 
 async fn has_java_version(min_version: &str) -> Result<bool> {
-    log::debug!(
+    debug!(
         "[requirements::has_java_version] Comprobando Java {}+...",
         min_version
     );
@@ -172,7 +172,7 @@ async fn has_java_version(min_version: &str) -> Result<bool> {
     let java_bin = match find_java_in_system().await {
         Some(bin) => bin,
         None => {
-            log::warn!("[requirements::has_java_version] Java no encontrado en el sistema");
+            warn!("[requirements::has_java_version] Java no encontrado en el sistema");
             return Ok(false);
         }
     };
@@ -180,10 +180,9 @@ async fn has_java_version(min_version: &str) -> Result<bool> {
     let output = match Command::new(&java_bin).arg("-version").output().await {
         Ok(out) => out,
         Err(e) => {
-            log::warn!(
+            warn!(
                 "[requirements::has_java_version] Error ejecutando {}: {}",
-                java_bin,
-                e
+                java_bin, e
             );
             return Ok(false);
         }
@@ -195,7 +194,7 @@ async fn has_java_version(min_version: &str) -> Result<bool> {
         String::from_utf8_lossy(&output.stdout)
     );
 
-    log::debug!(
+    debug!(
         "[requirements::has_java_version] Salida:\n{}",
         combined.trim()
     );
@@ -206,7 +205,7 @@ async fn has_java_version(min_version: &str) -> Result<bool> {
         .unwrap_or("");
 
     if version_num.is_empty() {
-        log::warn!("[requirements::has_java_version] No se pudo extraer versión");
+        warn!("[requirements::has_java_version] No se pudo extraer versión");
         return Ok(false);
     }
 
@@ -226,7 +225,7 @@ async fn has_java_version(min_version: &str) -> Result<bool> {
     let required_major: u32 = min_version.parse().unwrap_or(0);
     let ok = system_major >= required_major;
 
-    log::info!(
+    info!(
         "[requirements::has_java_version] Java: {} (major {}) — requerido: {} — {}",
         version_num,
         system_major,
@@ -237,10 +236,7 @@ async fn has_java_version(min_version: &str) -> Result<bool> {
     Ok(ok)
 }
 
-pub async fn install_java(
-    version: &str,
-    launcher_root: &Path,
-) -> Result<()> {
+pub async fn install_java(version: &str, launcher_root: &Path) -> Result<()> {
     let java_root = launcher_root.join("java");
     tokio::fs::create_dir_all(&java_root).await?;
 
@@ -286,11 +282,9 @@ pub async fn install_java(
 
     let archive_path = java_root.join(archive_name);
 
-    log::info!("Descargando Java {}...", version);
+    info!("Descargando Java {}...", version);
 
-    let response = reqwest::get(url)
-        .await?
-        .error_for_status()?;
+    let response = reqwest::get(url).await?.error_for_status()?;
 
     let bytes = response.bytes().await?;
 
@@ -368,11 +362,10 @@ pub async fn install_java(
         ));
     }
 
-    log::info!("Java {} instalado en {:?}", version, final_dir);
+    info!("Java {} instalado en {:?}", version, final_dir);
 
     Ok(())
 }
-
 
 async fn which(cmd: &str) -> bool {
     let found = Command::new("which")
@@ -382,7 +375,7 @@ async fn which(cmd: &str) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false);
 
-    log::trace!(
+    debug!(
         "[requirements::which] {} → {}",
         cmd,
         if found { "encontrado" } else { "no encontrado" }
@@ -390,12 +383,8 @@ async fn which(cmd: &str) -> bool {
     found
 }
 
-pub async fn check_java_by_minecraft_version(
-    mc_version: &str,
-    launcher_root: &Path,
-) -> bool {
-    let version =
-        get_required_java_version(mc_version);
+pub async fn check_java_by_minecraft_version(mc_version: &str, launcher_root: &Path) -> bool {
+    let version = get_required_java_version(mc_version);
 
     let java = if cfg!(windows) {
         launcher_root
@@ -413,19 +402,22 @@ pub async fn check_java_by_minecraft_version(
 
     java.exists()
 }
-pub async fn install_java_by_minecraft_version(minecraft_version: &str, launcher_root: &Path) -> Result<()> {
-    log::info!(
+pub async fn install_java_by_minecraft_version(
+    minecraft_version: &str,
+    launcher_root: &Path,
+) -> Result<()> {
+    info!(
         "[requirements::install_java_by_minecraft_version] Instalando Java para MC {}",
         minecraft_version
     );
     let min_version = get_required_java_version(minecraft_version);
-    let result = install_java(min_version,launcher_root).await;
+    let result = install_java(min_version, launcher_root).await;
     match &result {
-        Ok(_) => log::info!(
+        Ok(_) => info!(
             "[requirements::install_java_by_minecraft_version] Java {} instalado OK",
             min_version
         ),
-        Err(e) => log::error!(
+        Err(e) => error!(
             "[requirements::install_java_by_minecraft_version] Error: {:#}",
             e
         ),
@@ -433,10 +425,7 @@ pub async fn install_java_by_minecraft_version(minecraft_version: &str, launcher
     result
 }
 
-pub async fn get_java_binary_async(
-    launcher_root: &Path,
-    mc_version: &str,
-) -> String {
+pub async fn get_java_binary_async(launcher_root: &Path, mc_version: &str) -> String {
     let java_version = get_required_java_version(mc_version);
 
     let local = if cfg!(windows) {
@@ -457,8 +446,5 @@ pub async fn get_java_binary_async(
         return local.to_string_lossy().to_string();
     }
 
-    panic!(
-        "Java {} no instalado en el launcher",
-        java_version
-    );
+    panic!("Java {} no instalado en el launcher", java_version);
 }

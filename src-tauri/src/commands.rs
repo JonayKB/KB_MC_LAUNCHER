@@ -1,11 +1,12 @@
 use crate::auth::{microsoft, minecraft, skin, xbox};
-use crate::{RunningInstances, installer};
 use crate::installer::sysinfo::{get_system_info, recommend_settings, RecommendedSettings};
 use crate::launcher::{launch, LaunchSettings};
+use crate::{installer, RunningInstances};
 use std::path::Path;
 use tauri::AppHandle;
 use tauri::Manager;
 use tauri::Window;
+use tracing::{debug, error, info, warn};
 
 #[derive(serde::Serialize)]
 pub struct LoginCompleteResponse {
@@ -18,10 +19,7 @@ pub struct LoginCompleteResponse {
 }
 
 #[tauri::command]
-pub fn is_modpack_running(
-    state: tauri::State<RunningInstances>,
-    modpack_id: String,
-) -> bool {
+pub fn is_modpack_running(state: tauri::State<RunningInstances>, modpack_id: String) -> bool {
     state.processes.lock().unwrap().contains_key(&modpack_id)
 }
 
@@ -29,11 +27,9 @@ pub fn is_modpack_running(
 pub fn get_recommended_settings(app: tauri::AppHandle) -> RecommendedSettings {
     let info = get_system_info(&app);
     let rec = recommend_settings(&info);
-    log::info!(
+    info!(
         "[commands::get_recommended_settings] min:{}MB max:{}MB, Argumentos recomendados: {:?}",
-        rec.min_ram_mb,
-        rec.max_ram_mb,
-        rec.extra_jvm_args
+        rec.min_ram_mb, rec.max_ram_mb, rec.extra_jvm_args
     );
     rec
 }
@@ -193,19 +189,19 @@ pub async fn launch_modpack(
 
 #[tauri::command]
 pub async fn open_directory(path: String) -> Result<(), String> {
-    log::info!("[commands::open_directory] Abriendo: {}", path);
+    info!("[commands::open_directory] Abriendo: {}", path);
 
     let dir = std::path::Path::new(&path);
 
     if !dir.exists() {
-        log::warn!("[commands::open_directory] Directorio no existe: {}", path);
+        warn!("[commands::open_directory] Directorio no existe: {}", path);
         return Err(format!("El directorio no existe: {}", path));
     }
 
     #[cfg(target_os = "windows")]
     let result = {
         let win_path = path.replace('/', "\\");
-        log::info!("[commands::open_directory] win_path: {}", win_path);
+        info!("[commands::open_directory] win_path: {}", win_path);
         tokio::process::Command::new("explorer")
             .arg(&win_path)
             .spawn()
@@ -216,11 +212,11 @@ pub async fn open_directory(path: String) -> Result<(), String> {
 
     match result {
         Ok(_) => {
-            log::info!("[commands::open_directory] ✓ Abierto: {}", path);
+            info!("[commands::open_directory] ✓ Abierto: {}", path);
             Ok(())
         }
         Err(e) => {
-            log::error!("[commands::open_directory] Error abriendo {}: {}", path, e);
+            error!("[commands::open_directory] Error abriendo {}: {}", path, e);
             Err(format!("No se pudo abrir el directorio: {}", e))
         }
     }
@@ -228,7 +224,7 @@ pub async fn open_directory(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn uninstall_modpack(base_path: String, modpack_id: String) -> Result<(), String> {
-    log::info!(
+    info!(
         "[commands::uninstall_modpack] Desinstalando: {}",
         modpack_id
     );
@@ -237,7 +233,7 @@ pub async fn uninstall_modpack(base_path: String, modpack_id: String) -> Result<
     let instance_dir = base.join("instances").join(&modpack_id);
 
     if !instance_dir.exists() {
-        log::warn!(
+        warn!(
             "[commands::uninstall_modpack] Instancia no encontrada: {:?}",
             instance_dir
         );
@@ -247,15 +243,14 @@ pub async fn uninstall_modpack(base_path: String, modpack_id: String) -> Result<
     tokio::fs::remove_dir_all(&instance_dir)
         .await
         .map_err(|e| {
-            log::error!(
+            error!(
                 "[commands::uninstall_modpack] Error eliminando {:?}: {}",
-                instance_dir,
-                e
+                instance_dir, e
             );
             format!("Error desinstalando el modpack: {}", e)
         })?;
 
-    log::info!(
+    info!(
         "[commands::uninstall_modpack] ✓ Instancia eliminada: {:?}",
         instance_dir
     );
@@ -267,7 +262,7 @@ pub async fn clear_all_cache(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
 
-    log::info!("[commands::clear_all_cache] Borrando: {:?}", base);
+    info!("[commands::clear_all_cache] Borrando: {:?}", base);
 
     for folder in &["instances", "versions", "libraries", "assets", "java"] {
         let path = base.join(folder);
@@ -275,7 +270,7 @@ pub async fn clear_all_cache(app: tauri::AppHandle) -> Result<(), String> {
             tokio::fs::remove_dir_all(&path)
                 .await
                 .map_err(|e| format!("Error borrando {}: {}", folder, e))?;
-            log::info!("[commands::clear_all_cache] Eliminado: {:?}", path);
+            info!("[commands::clear_all_cache] Eliminado: {:?}", path);
         }
     }
     Ok(())
@@ -305,10 +300,9 @@ pub async fn auth_microsoft(window: Window) -> Result<LoginCompleteResponse, Str
     } else {
         None
     };
-    log::info!(
+    info!(
         "[commands::auth_microsoft] ✓ Login completo: {} ({})",
-        profile.username,
-        profile.uuid
+        profile.username, profile.uuid
     );
 
     Ok(LoginCompleteResponse {
@@ -323,7 +317,7 @@ pub async fn auth_microsoft(window: Window) -> Result<LoginCompleteResponse, Str
 
 #[tauri::command]
 pub async fn auth_refresh(refresh_token: String) -> Result<LoginCompleteResponse, String> {
-    log::info!("[commands::auth_refresh] Renovando sesión...");
+    info!("[commands::auth_refresh] Renovando sesión...");
     let client = reqwest::Client::new();
 
     let ms_tokens = crate::auth::microsoft::refresh_ms_token(&client, &refresh_token)

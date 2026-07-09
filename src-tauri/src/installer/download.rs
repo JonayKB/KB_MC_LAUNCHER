@@ -1,12 +1,13 @@
-use anyhow::{Context, Result};
-use std::path::Path;
-use std::time::Instant;
-use tokio::io::AsyncWriteExt;
-use tauri::AppHandle;
-use futures_util::StreamExt;
-use std::sync::Arc;
-use tokio::sync::Semaphore;
 use crate::installer::progress::{self, ProgressPayload};
+use anyhow::{Context, Result};
+use futures_util::StreamExt;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Instant;
+use tauri::AppHandle;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::Semaphore;
+use tracing::{debug, error, info, warn};
 
 pub async fn download_to_temp(url: &str, filename: &str) -> Result<std::path::PathBuf> {
     let tmp = std::env::temp_dir().join(format!("kblauncher_{}", filename));
@@ -20,10 +21,12 @@ pub async fn download_to(
     app: Option<&AppHandle>,
     step_label: &str,
 ) -> Result<()> {
-    let mut file = tokio::fs::File::create(dest).await
+    let mut file = tokio::fs::File::create(dest)
+        .await
         .context("No se pudo crear el archivo de destino")?;
 
-    let response = reqwest::get(url).await
+    let response = reqwest::get(url)
+        .await
         .context("Error en la petición HTTP")?
         .error_for_status()
         .context("El servidor devolvió un error")?;
@@ -37,7 +40,9 @@ pub async fn download_to(
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("Error leyendo chunk")?;
         downloaded += chunk.len() as u64;
-        file.write_all(&chunk).await.context("Error escribiendo en disco")?;
+        file.write_all(&chunk)
+            .await
+            .context("Error escribiendo en disco")?;
 
         if let Some(app) = app {
             if last_emit.elapsed().as_millis() >= 100 {
@@ -47,13 +52,16 @@ pub async fn download_to(
                     .map(|t| ((downloaded as f64 / t as f64) * 100.0) as u8)
                     .unwrap_or(0);
 
-                progress::emit(app, ProgressPayload::Download {
-                    step: step_label.to_string(),
-                    percent,
-                    downloaded_bytes: downloaded,
-                    total_bytes,
-                    speed_bps,
-                });
+                progress::emit(
+                    app,
+                    ProgressPayload::Download {
+                        step: step_label.to_string(),
+                        percent,
+                        downloaded_bytes: downloaded,
+                        total_bytes,
+                        speed_bps,
+                    },
+                );
                 last_emit = Instant::now();
             }
         }
@@ -101,13 +109,16 @@ pub async fn download_many(
                 let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 if let Some(ref app) = app {
                     if done % 20 == 0 || done == total {
-                        crate::installer::progress::emit(app, crate::installer::progress::ProgressPayload::Extract {
-                            step: format!("{} ({}/{})", label, done, total),
-                            percent: (done as f64 / total as f64 * 100.0) as u8,
-                            extracted_files: done,
-                            total_files: total,
-                            speed_fps: 0.0,
-                        });
+                        crate::installer::progress::emit(
+                            app,
+                            crate::installer::progress::ProgressPayload::Extract {
+                                step: format!("{} ({}/{})", label, done, total),
+                                percent: (done as f64 / total as f64 * 100.0) as u8,
+                                extracted_files: done,
+                                total_files: total,
+                                speed_fps: 0.0,
+                            },
+                        );
                     }
                 }
                 return;
@@ -117,25 +128,26 @@ pub async fn download_many(
                 tokio::fs::create_dir_all(parent).await.ok();
             }
 
-            let filename = dest.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let filename = dest.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
             if let Err(e) = download_to(&url, &dest, None, "").await {
-                log::warn!("[download_many] Error descargando {}: {}", filename, e);
+                warn!("[download_many] Error descargando {}: {}", filename, e);
                 return;
             }
 
             let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             if let Some(ref app) = app {
                 if done % 20 == 0 || done == total {
-                    crate::installer::progress::emit(app, crate::installer::progress::ProgressPayload::Extract {
-                        step: format!("{} ({}/{})", label, done, total),
-                        percent: (done as f64 / total as f64 * 100.0) as u8,
-                        extracted_files: done,
-                        total_files: total,
-                        speed_fps: 0.0,
-                    });
+                    crate::installer::progress::emit(
+                        app,
+                        crate::installer::progress::ProgressPayload::Extract {
+                            step: format!("{} ({}/{})", label, done, total),
+                            percent: (done as f64 / total as f64 * 100.0) as u8,
+                            extracted_files: done,
+                            total_files: total,
+                            speed_fps: 0.0,
+                        },
+                    );
                 }
             }
         });

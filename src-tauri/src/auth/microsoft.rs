@@ -4,9 +4,11 @@ use oauth2::{
     basic::BasicClient, AuthUrl, AuthorizationCode, ClientId, CsrfToken, PkceCodeChallenge,
     RedirectUrl, Scope, TokenResponse, TokenUrl,
 };
-use tauri::{Window, window};
 use std::collections::HashMap;
+use tauri::Window;
 use tokio::sync::oneshot;
+use tracing::{debug, error, info, warn};
+
 pub struct MicrosoftTokens {
     pub access_token: String,
     pub refresh_token: String,
@@ -57,7 +59,6 @@ pub async fn login(window: Window) -> Result<MicrosoftTokens> {
                         let _ = s.send(());
                     }
                 });
-                // Reemplaza tu actual bloque Html(...) por este:
 Html(r#"
 <!DOCTYPE html>
 <html lang="es">
@@ -312,7 +313,7 @@ Html(r#"
         axum::serve(listener, app)
             .with_graceful_shutdown(async {
                 let _ = shutdown_rx.await;
-                log::info!("[microsoft] Servidor de callback cerrado");
+                info!("[microsoft] Servidor de callback cerrado");
             })
             .await
             .ok();
@@ -342,11 +343,11 @@ Html(r#"
             "Microsoft no devolvió refresh_token — asegúrate de tener el scope offline_access",
         )?;
 
-    log::info!("[microsoft] ✓ access_token y refresh_token obtenidos");
+    info!("[microsoft] ✓ access_token y refresh_token obtenidos");
 
     if let Err(e) = window.set_focus() {
-    log::warn!("[tauri] No se pudo enfocar la ventana: {:?}", e);
-}
+        warn!("[tauri] No se pudo enfocar la ventana: {:?}", e);
+    }
 
     Ok(MicrosoftTokens {
         access_token,
@@ -358,7 +359,7 @@ pub async fn refresh_ms_token(
     client: &reqwest::Client,
     refresh_token: &str,
 ) -> Result<MicrosoftTokens> {
-    log::info!("[microsoft] Renovando token con refresh_token...");
+    info!("[microsoft] Renovando token con refresh_token...");
 
     let resp = client
         .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
@@ -374,7 +375,6 @@ pub async fn refresh_ms_token(
 
     let status = resp.status();
     let body = resp.text().await.context("Error leyendo respuesta")?;
-    log::info!("[microsoft] refresh status: {} | body: {}", status, body);
 
     if !status.is_success() {
         anyhow::bail!("Error renovando token MS: {}", body);
@@ -392,7 +392,7 @@ pub async fn refresh_ms_token(
         .context("refresh_token no encontrado")?
         .to_string();
 
-    log::info!("[microsoft] ✓ Token renovado");
+    info!("[microsoft] ✓ Token renovado");
     Ok(MicrosoftTokens {
         access_token,
         refresh_token,
