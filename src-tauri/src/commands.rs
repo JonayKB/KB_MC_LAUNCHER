@@ -1,5 +1,5 @@
 use crate::auth::{microsoft, minecraft, skin, xbox};
-use crate::installer;
+use crate::{RunningInstances, installer};
 use crate::installer::sysinfo::{get_system_info, recommend_settings, RecommendedSettings};
 use crate::launcher::{launch, LaunchSettings};
 use std::path::Path;
@@ -15,6 +15,14 @@ pub struct LoginCompleteResponse {
     pub skin_head_base64: Option<String>,
     pub expires_in: u64,
     pub refresh_token: String,
+}
+
+#[tauri::command]
+pub fn is_modpack_running(
+    state: tauri::State<RunningInstances>,
+    modpack_id: String,
+) -> bool {
+    state.processes.lock().unwrap().contains_key(&modpack_id)
 }
 
 #[tauri::command]
@@ -63,6 +71,7 @@ pub async fn install_modpack(
     overrides_url: String,
     mods_url: String,
     modpack_id: String,
+    modpack_version: Option<String>,
 ) -> Result<(), String> {
     installer::install(
         app,
@@ -73,6 +82,28 @@ pub async fn install_modpack(
         overrides_url,
         mods_url,
         modpack_id,
+        modpack_version,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_modpack(
+    app: AppHandle,
+    base_path: String,
+    overrides_url: String,
+    mods_url: String,
+    modpack_id: String,
+    modpack_version: Option<String>,
+) -> Result<(), String> {
+    installer::update(
+        app,
+        base_path,
+        overrides_url,
+        mods_url,
+        modpack_id,
+        modpack_version,
     )
     .await
     .map_err(|e| e.to_string())
@@ -83,12 +114,41 @@ pub fn is_modpack_installed(base_path: String, modpack_id: String) -> bool {
     let base = Path::new(&base_path);
     let instance_dir = base.join("instances").join(&modpack_id);
     let mods_dir = instance_dir.join("mods");
+    let installed_version_file = instance_dir.join("installed_version");
 
-    instance_dir.exists() && mods_dir.exists()
+    if !instance_dir.exists() || !mods_dir.exists() {
+        return false;
+    }
+
+    match std::fs::read_to_string(&installed_version_file) {
+        Ok(content) => !content.trim().is_empty(),
+        Err(_) => false,
+    }
+}
+
+#[tauri::command]
+pub fn check_needs_update(
+    base_path: String,
+    modpack_id: String,
+    modpack_version: Option<String>,
+) -> bool {
+    let base = Path::new(&base_path);
+    let instance_dir = base.join("instances").join(&modpack_id);
+    let installed_version_file = instance_dir.join("installed_version");
+
+    if !instance_dir.exists() {
+        return false;
+    }
+
+    match std::fs::read_to_string(&installed_version_file) {
+        Ok(content) => content.trim() != modpack_version.as_deref().unwrap_or(""),
+        Err(_) => false,
+    }
 }
 
 #[tauri::command]
 pub async fn launch_modpack(
+    app: AppHandle,
     base_path: String,
     modpack_id: String,
     mc_version: String,
@@ -119,9 +179,16 @@ pub async fn launch_modpack(
         is_online,
     };
 
-    launch(base_path, modpack_id, mc_version, forge_version, settings)
-        .await
-        .map_err(|e| e.to_string())
+    launch(
+        app,
+        base_path,
+        modpack_id,
+        mc_version,
+        forge_version,
+        settings,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -5,6 +5,13 @@ mod commands;
 mod installer;
 mod launcher;
 mod auth;
+use std::collections::HashMap;
+use std::sync::Mutex;
+#[derive(Default)]
+pub struct RunningInstances {
+    pub processes: Mutex<HashMap<String, u32>>, // modpack_id -> pid
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -74,7 +81,11 @@ pub fn run() {
             commands::restart_app,
             commands::auth_microsoft,
             commands::auth_refresh,
+            commands::update_modpack,
+            commands::check_needs_update,
+            commands::is_modpack_running,
         ])
+        .manage(RunningInstances::default())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

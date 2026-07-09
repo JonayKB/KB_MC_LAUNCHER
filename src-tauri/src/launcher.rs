@@ -1,6 +1,8 @@
 use crate::installer::requirements::get_java_binary_async;
+use crate::RunningInstances;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub struct LaunchSettings {
     pub min_ram_mb: u32,
@@ -32,6 +34,7 @@ impl Default for LaunchSettings {
     }
 }
 pub async fn launch(
+    app: AppHandle,
     base_path: String,
     modpack_id: String,
     mc_version: String,
@@ -327,8 +330,61 @@ pub async fn launch(
         .current_dir(&instance_dir)
         .spawn()
     {
-        Ok(child) => {
-            log::info!("[launcher::launch] ✓ PID {:?}", child.id());
+        Ok(mut child) => {
+            let pid = child.id().unwrap_or(0);
+            log::info!("[launcher::launch] ✓ PID {:?}", pid);
+
+            if let Some(state) = app.try_state::<RunningInstances>() {
+                state
+                    .processes
+                    .lock()
+                    .unwrap()
+                    .insert(modpack_id.clone(), pid);
+            } else {
+                log::warn!(
+                    "[launcher] RunningInstances no estaba registrado en el estado de Tauri"
+                );
+            }
+
+            app.emit(
+                "game_started",
+                serde_json::json!({
+                    "modpackId": modpack_id,
+                }),
+            )
+            .ok();
+
+            let app_clone = app.clone();
+            let modpack_id_clone = modpack_id.clone();
+            tokio::spawn(async move {
+                let status = child.wait().await;
+                let exit_code = status.ok().and_then(|s| s.code());
+                log::info!(
+                    "[launcher::launch] Proceso del modpack '{}' finalizado (code={:?})",
+                    modpack_id_clone,
+                    exit_code
+                );
+
+                // Desregistrar
+                if let Some(state) = app_clone.try_state::<RunningInstances>() {
+                    state.processes.lock().unwrap().remove(&modpack_id_clone);
+                } else {
+                    log::warn!(
+                        "[launcher] RunningInstances no estaba registrado en el estado de Tauri"
+                    );
+                }
+
+                app_clone
+                    .emit(
+                        "game_exited",
+                        serde_json::json!({
+                            "modpackId": modpack_id_clone,
+                            "exitCode": exit_code,
+                        }),
+                    )
+                    .ok();
+            });
+
             Ok(())
         }
         Err(e) => {
