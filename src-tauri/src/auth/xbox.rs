@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde_json::json;
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
 #[derive(Debug)]
 pub struct XboxTokens {

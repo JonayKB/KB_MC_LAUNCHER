@@ -7,7 +7,7 @@ use std::time::Instant;
 use tauri::AppHandle;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
-use tracing::{debug, error, info, warn};
+use tracing::warn;
 
 pub async fn download_to_temp(url: &str, filename: &str) -> Result<std::path::PathBuf> {
     let tmp = std::env::temp_dir().join(format!("kblauncher_{}", filename));

@@ -7,8 +7,8 @@ use crate::installer::download;
 pub async fn install(
     app: &AppHandle,
     versions_dir: &Path,
-    instance_dir: &Path,
-    mc_version: &str,
+    _instance_dir: &Path,
+    _mc_version: &str,
     neoforge_version: &str,
 ) -> Result<()> {
     emit(app, ProgressPayload::Step { step: "Descargando instalador de NeoForge...".into(), percent: 10 });

@@ -2,7 +2,7 @@ use crate::auth::xbox::XboxTokens;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MinecraftProfile {
@@ -30,7 +30,7 @@ pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result
         .await
         .context("Error contactando Minecraft Services")?;
 
-    let status = mc_resp.status();
+    let _status = mc_resp.status();
 
     let body = mc_resp
         .text()

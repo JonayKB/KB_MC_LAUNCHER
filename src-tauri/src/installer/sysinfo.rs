@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::AppHandle;
 use tauri::Manager;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemInfo {
@@ -48,7 +48,7 @@ pub fn get_system_info(app: &AppHandle) -> SystemInfo {
 fn get_primary_screen_size(app: &AppHandle) -> (u32, u32) {
     if let Some(window) = app.get_webview_window("main") {
         if let Ok(monitors) = window.available_monitors() {
-            if let Some(primary) = monitors.iter().find(|m| true) {
+            if let Some(primary) = monitors.iter().find(|_m| true) {
                 let size = primary.size();
                 let (w, h) = (size.width, size.height);
                 info!("[sysinfo] Pantalla principal: {}x{}", w, h);

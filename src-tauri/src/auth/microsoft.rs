@@ -7,7 +7,7 @@ use oauth2::{
 use std::collections::HashMap;
 use tauri::Window;
 use tokio::sync::oneshot;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 pub struct MicrosoftTokens {
     pub access_token: String,

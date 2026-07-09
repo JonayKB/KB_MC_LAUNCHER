@@ -5,7 +5,6 @@ pub mod progress;
 pub mod requirements;
 pub mod sysinfo;
 
-use crate::installer::sysinfo::{get_system_info, recommend_settings, RecommendedSettings};
 use anyhow::{Context, Result};
 use progress::emit;
 pub use progress::ProgressPayload;

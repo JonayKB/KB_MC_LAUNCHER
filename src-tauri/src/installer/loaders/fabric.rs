@@ -7,7 +7,7 @@ use crate::installer::download;
 pub async fn install(
     app: &AppHandle,
     versions_dir: &Path,
-    instance_dir: &Path,
+    _instance_dir: &Path,
     mc_version: &str,
     fabric_version: &str,
 ) -> Result<()> {

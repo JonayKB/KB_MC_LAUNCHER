@@ -6,7 +6,7 @@ use crate::installer::requirements::{
 use anyhow::{Context, Result};
 use std::path::Path;
 use tauri::AppHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 const VERSION_MANIFEST: &str = "https://launchermeta.mojang.com/mc/game/version_manifest.json";
 

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
 /// Descarga la skin y extrae la cabeza (8x8 px del área de la cara)
 /// Devuelve los bytes de un PNG 8x8 (o escalado a 64x64 para mejor calidad)

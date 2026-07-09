@@ -6,7 +6,7 @@ use std::path::Path;
 use tauri::AppHandle;
 use tauri::Manager;
 use tauri::Window;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 #[derive(serde::Serialize)]
 pub struct LoginCompleteResponse {
