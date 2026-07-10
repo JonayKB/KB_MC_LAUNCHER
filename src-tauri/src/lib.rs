@@ -17,11 +17,10 @@ pub struct RunningInstances {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    init_logging();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            init_logging(app.handle());
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;

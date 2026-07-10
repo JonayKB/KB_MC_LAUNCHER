@@ -1,13 +1,13 @@
+use tauri::{AppHandle, Manager};
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
 
-pub fn init_logging() {
-    let log_dir = std::path::PathBuf::from("logs");
+pub fn init_logging(app: &AppHandle) {
+    let log_dir = app.path().app_data_dir().unwrap().join("logs");
 
     std::fs::create_dir_all(&log_dir).ok();
 
     let output_file = tracing_appender::rolling::never(&log_dir, "output.log");
-
     let error_file = tracing_appender::rolling::never(&log_dir, "error.log");
 
     let console_layer = tracing_subscriber::fmt::layer()
