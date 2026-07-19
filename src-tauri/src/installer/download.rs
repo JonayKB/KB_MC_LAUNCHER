@@ -1,4 +1,3 @@
-use crate::installer::progress::{self, ProgressPayload};
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
 use std::path::Path;
@@ -8,6 +7,8 @@ use tauri::AppHandle;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
 use tracing::warn;
+
+use crate::installer::{ProgressPayload, progress};
 
 pub async fn download_to_temp(url: &str, filename: &str) -> Result<std::path::PathBuf> {
     let tmp = std::env::temp_dir().join(format!("kblauncher_{}", filename));
@@ -21,10 +22,40 @@ pub async fn download_to(
     app: Option<&AppHandle>,
     step_label: &str,
 ) -> Result<()> {
-    let mut file = tokio::fs::File::create(dest)
-        .await
-        .context("No se pudo crear el archivo de destino")?;
+    // Escribir a un archivo temporal junto al destino final, no al destino directamente
+    let tmp_dest = dest.with_extension(
+        format!("{}.part", dest.extension().and_then(|e| e.to_str()).unwrap_or("tmp")),
+    );
 
+    let result = download_to_inner(url, &tmp_dest, app, step_label).await;
+
+    match result {
+        Ok(()) => {
+            // Solo renombramos al destino final si la descarga se completó entera
+            tokio::fs::rename(&tmp_dest, dest)
+                .await
+                .context("No se pudo mover el archivo descargado a su destino final")?;
+            Ok(())
+        }
+        Err(e) => {
+            // Limpiar el .part corrupto/incompleto para no dejar basura
+            let _ = tokio::fs::remove_file(&tmp_dest).await;
+            Err(e)
+        }
+    }
+}
+
+async fn download_to_inner(
+    url: &str,
+    dest: &Path,
+    app: Option<&AppHandle>,
+    step_label: &str,
+) -> Result<()> {
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent).await.ok();
+    }
+
+    // Petición HTTP PRIMERO, archivo se crea DESPUÉS de confirmar respuesta OK
     let response = reqwest::get(url)
         .await
         .context("Error en la petición HTTP")?
@@ -32,6 +63,10 @@ pub async fn download_to(
         .context("El servidor devolvió un error")?;
 
     let total_bytes = response.content_length();
+    let mut file = tokio::fs::File::create(dest)
+        .await
+        .context("No se pudo crear el archivo de destino")?;
+
     let mut downloaded: u64 = 0;
     let mut stream = response.bytes_stream();
     let start = Instant::now();
@@ -67,6 +102,19 @@ pub async fn download_to(
         }
     }
 
+    file.flush().await.context("Error al hacer flush del archivo")?;
+
+    // Verificación de tamaño: si el servidor nos dijo cuánto venía y no coincide, es descarga incompleta
+    if let Some(expected) = total_bytes {
+        if downloaded != expected {
+            anyhow::bail!(
+                "Descarga incompleta: se esperaban {} bytes, se recibieron {}",
+                expected,
+                downloaded
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -83,7 +131,7 @@ pub async fn download_to_temp_with_progress(
 }
 
 pub async fn download_many(
-    items: Vec<(String, std::path::PathBuf)>, // (url, dest)
+    items: Vec<(String, std::path::PathBuf)>, // (url, dest, [opcional: tamaño esperado])
     max_concurrent: usize,
     app: Option<&AppHandle>,
     label: &str,
@@ -103,9 +151,15 @@ pub async fn download_many(
         let label = label.clone();
 
         let handle = tokio::spawn(async move {
-            let _permit = permit; // se libera al hacer drop
+            let _permit = permit;
 
-            if dest.exists() {
+            // Antes: solo `dest.exists()`. Ahora también comprobamos que no esté vacío/corrupto.
+            let already_valid = match tokio::fs::metadata(&dest).await {
+                Ok(meta) => meta.len() > 0,
+                Err(_) => false,
+            };
+
+            if already_valid {
                 let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 if let Some(ref app) = app {
                     if done % 20 == 0 || done == total {
@@ -122,10 +176,6 @@ pub async fn download_many(
                     }
                 }
                 return;
-            }
-
-            if let Some(parent) = dest.parent() {
-                tokio::fs::create_dir_all(parent).await.ok();
             }
 
             let filename = dest.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -155,7 +205,6 @@ pub async fn download_many(
         handles.push(handle);
     }
 
-    // Esperar a todas
     for handle in handles {
         handle.await.ok();
     }
