@@ -1,9 +1,9 @@
 use crate::installer::requirements::get_java_binary_async;
 use crate::RunningInstances;
 use anyhow::{Context, Result};
-use tracing::{debug, error, info, warn};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
+use tracing::{debug, error, info, warn};
 pub struct LaunchSettings {
     pub min_ram_mb: u32,
     pub max_ram_mb: u32,
@@ -33,6 +33,30 @@ impl Default for LaunchSettings {
         }
     }
 }
+#[cfg(target_os = "windows")]
+fn set_gpu_preference_high_performance(exe_path: &str) {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    match hkcu.create_subkey("Software\\Microsoft\\DirectX\\UserGpuPreferences") {
+        Ok((key, _)) => {
+            if let Err(e) = key.set_value(exe_path, &"GpuPreference=2;") {
+                warn!("[launcher] No se pudo fijar preferencia de GPU: {}", e);
+            } else {
+                info!(
+                    "[launcher] GPU de alto rendimiento fijada para: {}",
+                    exe_path
+                );
+            }
+        }
+        Err(e) => warn!("[launcher] No se pudo abrir UserGpuPreferences: {}", e),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_gpu_preference_high_performance(_exe_path: &str) {}
+
 pub async fn launch(
     app: AppHandle,
     base_path: String,
@@ -56,6 +80,7 @@ pub async fn launch(
         settings.window_width,
         settings.window_height
     );
+    set_gpu_preference_high_performance(&java_bin);
 
     let forge_id = format!("{}-forge-{}", mc_version, forge_version);
     let forge_json_path = versions_dir
@@ -326,6 +351,7 @@ pub async fn launch(
     match tokio::process::Command::new(&java_bin)
         .args(&cmd_args)
         .current_dir(&instance_dir)
+        .env("SHIM_MCCOMPAT", "0x800000001")
         .spawn()
     {
         Ok(mut child) => {
