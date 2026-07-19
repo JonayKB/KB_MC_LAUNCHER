@@ -36,8 +36,11 @@ axum = "0.8"
 url = "2"
 open = "5"
 tracing = "0.1"
-winreg = "0.52"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
+
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
