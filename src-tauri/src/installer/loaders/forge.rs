@@ -238,17 +238,23 @@ pub async fn install(
 
     // ── 5. Libraries de Forge ─────────────────────────────────
     info!("[forge::install] Descargando libraries de Forge...");
-    download_libraries(&forge_json, launcher_root, app, "Libraries Forge").await;
+    download_libraries(&forge_json, launcher_root, app, "Libraries Forge")
+        .await
+        .context("Fallo descargando libraries de Forge")?;
     info!("[forge::install] Libraries de Forge completadas");
 
     // ── 6. Libraries de Minecraft ─────────────────────────────
     info!("[forge::install] Descargando libraries de Minecraft...");
-    download_libraries(&mc_json, launcher_root, app, "Libraries Minecraft").await;
+    download_libraries(&mc_json, launcher_root, app, "Libraries Minecraft")
+        .await
+        .context("Fallo descargando libraries de Minecraft")?;
     info!("[forge::install] Libraries de Minecraft completadas");
 
     // ── 7. Assets de vanilla ──────────────────────────────────
     info!("[forge::install] Descargando assets...");
-    download_assets(&mc_json, launcher_root, app).await;
+    download_assets(&mc_json, launcher_root, app)
+        .await
+        .context("Fallo descargando assets")?;
     info!("[forge::install] Assets completados");
 
     emit(
@@ -273,7 +279,7 @@ async fn download_libraries(
     launcher_root: &Path,
     app: &AppHandle,
     label: &str,
-) {
+) -> Result<()> {
     let libs_dir = launcher_root.join("libraries");
 
     let items: Vec<(String, std::path::PathBuf)> = json["libraries"]
@@ -297,22 +303,52 @@ async fn download_libraries(
         label,
         items.len()
     );
-    download::download_many(items, 16, Some(app), label).await;
+
+    let failures = download::download_many(items, 16, Some(app), label).await;
+
+    if !failures.is_empty() {
+        for f in &failures {
+            error!(
+                "[download_libraries] {} — fallo definitivo: {} ({})",
+                label,
+                f.dest.display(),
+                f.error
+            );
+        }
+        anyhow::bail!(
+            "{}: {} archivo(s) no se pudieron descargar tras varios intentos. Revisa tu conexión e inténtalo de nuevo.",
+            label,
+            failures.len()
+        );
+    }
+
     info!("[download_libraries] {} completado", label);
+    Ok(())
 }
 
-async fn download_assets(mc_json: &serde_json::Value, launcher_root: &Path, app: &AppHandle) {
-    let asset_index_url = mc_json["assetIndex"]["url"].as_str();
-    let asset_id = mc_json["assetIndex"]["id"].as_str();
-    let (Some(index_url), Some(id)) = (asset_index_url, asset_id) else {
-        return;
-    };
+async fn download_assets(
+    mc_json: &serde_json::Value,
+    launcher_root: &Path,
+    app: &AppHandle,
+) -> Result<()> {
+    let asset_index_url = mc_json["assetIndex"]["url"]
+        .as_str()
+        .context("assetIndex.url no encontrado en el JSON de Minecraft")?;
+    let asset_id = mc_json["assetIndex"]["id"]
+        .as_str()
+        .context("assetIndex.id no encontrado en el JSON de Minecraft")?;
 
     let indexes_dir = launcher_root.join("assets").join("indexes");
     tokio::fs::create_dir_all(&indexes_dir).await.ok();
-    let index_path = indexes_dir.join(format!("{}.json", id));
+    let index_path = indexes_dir.join(format!("{}.json", asset_id));
 
-    if !index_path.exists() {
+    // Verificar no solo existencia, también que no esté vacío/corrupto de un intento anterior
+    let index_valid = match tokio::fs::metadata(&index_path).await {
+        Ok(meta) => meta.len() > 0,
+        Err(_) => false,
+    };
+
+    if !index_valid {
         emit(
             app,
             ProgressPayload::Step {
@@ -320,20 +356,22 @@ async fn download_assets(mc_json: &serde_json::Value, launcher_root: &Path, app:
                 percent: 0,
             },
         );
-        download::download_to(index_url, &index_path, None, "")
+        // ANTES: .ok() se tragaba el error y dejaba el índice ausente/corrupto en silencio.
+        // AHORA: se propaga con `?`, así que si falla, la instalación entera falla con
+        // un mensaje claro en vez de arrancar el juego sin sonidos/texturas.
+        download::download_to(asset_index_url, &index_path, None, "")
             .await
-            .ok();
+            .context("No se pudo descargar el índice de assets")?;
     }
 
-    let Ok(index_str) = tokio::fs::read_to_string(&index_path).await else {
-        return;
-    };
-    let Ok(index_json) = serde_json::from_str::<serde_json::Value>(&index_str) else {
-        return;
-    };
-    let Some(objects) = index_json["objects"].as_object() else {
-        return;
-    };
+    let index_str = tokio::fs::read_to_string(&index_path)
+        .await
+        .context("No se pudo leer el índice de assets recién descargado")?;
+    let index_json: serde_json::Value = serde_json::from_str(&index_str)
+        .context("El índice de assets descargado no es un JSON válido")?;
+    let objects = index_json["objects"]
+        .as_object()
+        .context("El índice de assets no contiene 'objects'")?;
 
     let objects_dir = launcher_root.join("assets").join("objects");
 
@@ -368,10 +406,28 @@ async fn download_assets(mc_json: &serde_json::Value, launcher_root: &Path, app:
                 percent: 100,
             },
         );
-        return;
+        return Ok(());
     }
 
-    // Más concurrencia para assets (son archivos pequeños)
-    download::download_many(items, 32, Some(app), "Assets").await;
+    // Concurrencia moderada: 32 en paralelo estaba gatillando rate-limit de Mojang
+    // en ráfagas, causando decenas de fallos simultáneos. 20 es más conservador.
+    let failures = download::download_many(items, 20, Some(app), "Assets").await;
+
+    if !failures.is_empty() {
+        for f in &failures {
+            error!(
+                "[download_assets] Fallo definitivo: {} ({})",
+                f.dest.display(),
+                f.error
+            );
+        }
+        anyhow::bail!(
+            "No se pudieron descargar {} de {} assets tras varios intentos. Revisa tu conexión e inténtalo de nuevo.",
+            failures.len(),
+            total
+        );
+    }
+
     info!("[download_assets] ✓ Assets completados");
+    Ok(())
 }
