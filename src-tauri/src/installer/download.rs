@@ -20,7 +20,13 @@ pub async fn download_to(
     app: Option<&AppHandle>,
     step_label: &str,
 ) -> Result<()> {
-    let mut file = tokio::fs::File::create(dest).await
+    // Se descarga a `.part` y se renombra al final: si la descarga se corta
+    // (error o cancelación) no queda un archivo a medias que parezca completo
+    let mut part_name = dest.as_os_str().to_owned();
+    part_name.push(".part");
+    let part = std::path::PathBuf::from(part_name);
+
+    let mut file = tokio::fs::File::create(&part).await
         .context("No se pudo crear el archivo de destino")?;
 
     let response = reqwest::get(url).await
@@ -59,6 +65,10 @@ pub async fn download_to(
         }
     }
 
+    file.flush().await.context("Error escribiendo en disco")?;
+    drop(file);
+    tokio::fs::rename(&part, dest).await
+        .context("No se pudo mover el archivo descargado")?;
     Ok(())
 }
 
@@ -86,7 +96,8 @@ pub async fn download_many(
     let app_clone = app.cloned();
     let label = label.to_string();
 
-    let mut handles = Vec::new();
+    // JoinSet aborta todas las descargas pendientes si se cancela la instalación
+    let mut handles = tokio::task::JoinSet::new();
 
     for (url, dest) in items {
         let permit = semaphore.clone().acquire_owned().await.unwrap();
@@ -94,7 +105,7 @@ pub async fn download_many(
         let app = app_clone.clone();
         let label = label.clone();
 
-        let handle = tokio::spawn(async move {
+        handles.spawn(async move {
             let _permit = permit; // se libera al hacer drop
 
             if dest.exists() {
@@ -139,12 +150,8 @@ pub async fn download_many(
                 }
             }
         });
-
-        handles.push(handle);
     }
 
     // Esperar a todas
-    for handle in handles {
-        handle.await.ok();
-    }
+    while handles.join_next().await.is_some() {}
 }

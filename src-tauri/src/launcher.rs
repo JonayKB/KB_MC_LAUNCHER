@@ -1,3 +1,4 @@
+use crate::installer::loaders::fabric;
 use crate::installer::requirements::get_java_binary_async;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
@@ -66,7 +67,8 @@ pub async fn launch(
     base_path: String,
     modpack_id: String,
     mc_version: String,
-    forge_version: String,
+    loader: String,
+    loader_version: String,
     auth: LaunchAuth,
     settings: LaunchSettings,
 ) -> Result<tokio::process::Child> {
@@ -87,16 +89,20 @@ pub async fn launch(
         settings.window_height
     );
 
-    let forge_id = format!("{}-forge-{}", mc_version, forge_version);
-    let forge_json_path = versions_dir
-        .join(&forge_id)
-        .join(format!("{}.json", forge_id));
+    let version_id = match loader.as_str() {
+        "forge" => format!("{}-forge-{}", mc_version, loader_version),
+        "fabric" => fabric::version_id(&mc_version, &loader_version),
+        other => anyhow::bail!("El loader '{}' todavía no está soportado", other),
+    };
+    let loader_json_path = versions_dir
+        .join(&version_id)
+        .join(format!("{}.json", version_id));
 
-    let forge_json_str = tokio::fs::read_to_string(&forge_json_path)
+    let loader_json_str = tokio::fs::read_to_string(&loader_json_path)
         .await
-        .context("No se pudo leer el JSON de Forge")?;
-    let forge_json: serde_json::Value =
-        serde_json::from_str(&forge_json_str).context("JSON de Forge inválido")?;
+        .context("No se pudo leer el JSON del loader. ¿Está instalado el modpack?")?;
+    let loader_json: serde_json::Value =
+        serde_json::from_str(&loader_json_str).context("JSON del loader inválido")?;
 
     let mc_json_path = versions_dir
         .join(&mc_version)
@@ -106,16 +112,21 @@ pub async fn launch(
         .context("No se pudo leer el JSON de Minecraft")?;
     let mc_json: serde_json::Value =
         serde_json::from_str(&mc_json_str).context("JSON de Minecraft inválido")?;
-
-    let main_class = forge_json["mainClass"]
+    // El índice de assets no coincide con la versión (1.20.1 usa el índice "5")
+    let asset_index = mc_json["assetIndex"]["id"]
         .as_str()
-        .context("mainClass no encontrado en JSON de Forge")?
+        .unwrap_or(&mc_version)
+        .to_string();
+
+    let main_class = loader_json["mainClass"]
+        .as_str()
+        .context("mainClass no encontrado en JSON del loader")?
         .to_string();
 
     // ── Classpath ─────────────────────────────────────────────
     let mut classpath_entries: Vec<PathBuf> = Vec::new();
     add_libraries(&mc_json, &libs_dir, &mut classpath_entries);
-    add_libraries(&forge_json, &libs_dir, &mut classpath_entries);
+    add_libraries(&loader_json, &libs_dir, &mut classpath_entries);
     classpath_entries.sort();
     classpath_entries.dedup();
 
@@ -126,11 +137,11 @@ pub async fn launch(
         classpath_entries.push(mc_jar);
     }
 
-    let forge_jar = versions_dir
-        .join(&forge_id)
-        .join(format!("{}.jar", forge_id));
-    if forge_jar.exists() {
-        classpath_entries.push(forge_jar);
+    let loader_jar = versions_dir
+        .join(&version_id)
+        .join(format!("{}.jar", version_id));
+    if loader_jar.exists() {
+        classpath_entries.push(loader_jar);
     }
 
     let sep = if cfg!(windows) { ";" } else { ":" };
@@ -141,7 +152,7 @@ pub async fn launch(
         .join(sep);
 
     // ── Module path ───────────────────────────────────────────
-    let ignore_list: Vec<&str> = forge_json["arguments"]["jvm"]
+    let ignore_list: Vec<&str> = loader_json["arguments"]["jvm"]
         .as_array()
         .and_then(|args| {
             args.iter().find_map(|a| {
@@ -202,10 +213,9 @@ pub async fn launch(
             jvm_args.push(arg.to_string());
         }
     }
-    // Args del JSON de Forge
-    // En launcher.rs, al procesar los JVM args del JSON de Forge:
+    // Args JVM del JSON del loader (Forge/Fabric)
 
-    if let Some(jvm_json_args) = forge_json["arguments"]["jvm"].as_array() {
+    if let Some(jvm_json_args) = loader_json["arguments"]["jvm"].as_array() {
         let mut skip_next = false;
         for arg in jvm_json_args {
             if skip_next {
@@ -222,10 +232,10 @@ pub async fn launch(
                     skip_next = true;
                     continue;
                 }
-                // ← NUEVO: filtrar args de GC del JSON de Forge
+                // Filtrar args de GC del JSON del loader
                 // para que no conflicten con los nuestros
                 if is_gc_arg(s) {
-                    log::debug!("[launcher] Filtrando GC arg del JSON de Forge: {}", s);
+                    log::debug!("[launcher] Filtrando GC arg del JSON del loader: {}", s);
                     continue;
                 }
                 let resolved = resolve_arg(
@@ -234,6 +244,7 @@ pub async fn launch(
                     &instance_dir,
                     &libs_dir,
                     &mc_version,
+                    &asset_index,
                     &auth,
                 );
                 if !resolved.is_empty() {
@@ -256,6 +267,7 @@ pub async fn launch(
                         &instance_dir,
                         &libs_dir,
                         &mc_version,
+                        &asset_index,
                         &auth,
                     );
                     if !resolved.is_empty() {
@@ -276,6 +288,7 @@ pub async fn launch(
                                 &instance_dir,
                                 &libs_dir,
                                 &mc_version,
+                                &asset_index,
                                 &auth,
                             );
                             if !resolved.is_empty() {
@@ -296,13 +309,13 @@ pub async fn launch(
         "--username".to_string(),
         username.clone(),
         "--version".to_string(),
-        forge_id.clone(),
+        version_id.clone(),
         "--gameDir".to_string(),
         instance_dir.to_string_lossy().to_string(),
         "--assetsDir".to_string(),
         base.join("assets").to_string_lossy().to_string(),
         "--assetIndex".to_string(),
-        mc_version.clone(),
+        asset_index.clone(),
         "--uuid".to_string(),
         auth.uuid.clone(),
         "--accessToken".to_string(),
@@ -329,7 +342,7 @@ pub async fn launch(
         );
     }
 
-    if let Some(game_json_args) = forge_json["arguments"]["game"].as_array() {
+    if let Some(game_json_args) = loader_json["arguments"]["game"].as_array() {
         for arg in game_json_args {
             if let Some(s) = arg.as_str() {
                 let resolved = resolve_arg(
@@ -338,6 +351,7 @@ pub async fn launch(
                     &instance_dir,
                     &libs_dir,
                     &mc_version,
+                    &asset_index,
                     &auth,
                 );
                 game_args.push(resolved);
@@ -431,12 +445,13 @@ fn resolve_arg(
     instance_dir: &Path,
     libs_dir: &Path,
     mc_version: &str,
+    asset_index: &str,
     auth: &LaunchAuth,
 ) -> String {
     let sep = if cfg!(windows) { ";" } else { ":" };
     arg.replace("${game_directory}", &instance_dir.to_string_lossy())
         .replace("${assets_root}", &format!("{}/assets", base_path))
-        .replace("${assets_index_name}", mc_version)
+        .replace("${assets_index_name}", asset_index)
         .replace("${version_name}", mc_version)
         .replace("${auth_player_name}", &auth.username)
         .replace("${auth_uuid}", &auth.uuid)

@@ -10,6 +10,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .manage(commands::RunningGames::default())
+        .manage(commands::InstallState::default())
         .setup(|app| {
             #[cfg(desktop)]
             app.handle()
@@ -76,7 +77,8 @@ pub fn run() {
             commands::auth_microsoft,
             commands::refresh_microsoft,
             commands::is_game_running,
-            commands::get_installed_version
+            commands::get_installed_version,
+            commands::cancel_install
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

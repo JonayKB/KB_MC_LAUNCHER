@@ -59,6 +59,13 @@ pub fn get_base_path(app: tauri::AppHandle) -> String {
         .to_string_lossy()
         .to_string()
 }
+/// Instalación en curso (solo una a la vez: comparten archivos temporales)
+#[derive(Default)]
+pub struct InstallState(pub Mutex<Option<tokio::task::AbortHandle>>);
+
+/// Error que recibe el frontend cuando el usuario cancela la instalación
+const INSTALL_CANCELLED: &str = "CANCELLED";
+
 #[tauri::command]
 pub async fn install_modpack(
     app: AppHandle,
@@ -72,19 +79,65 @@ pub async fn install_modpack(
     version: Option<String>,
 ) -> Result<(), String> {
     validate_modpack_id(&modpack_id)?;
-    installer::install(
-        app,
-        base_path,
-        mc_version,
-        loader,
-        loader_version,
-        overrides_url,
-        mods_url,
-        modpack_id,
-        version,
-    )
-    .await
-    .map_err(|e| e.to_string())
+
+    let instance_dir = Path::new(&base_path).join("instances").join(&modpack_id);
+    let existed = instance_dir.exists();
+    if existed {
+        // Marca la instancia como incompleta hasta que termine bien,
+        // así si falla o se cancela el frontend ofrecerá "Actualizar"
+        tokio::fs::write(instance_dir.join(installer::INSTALLED_VERSION_FILE), "")
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    let handle = {
+        let state = app.state::<InstallState>();
+        let mut current = state.0.lock().unwrap();
+        if current.is_some() {
+            return Err("Ya hay una instalación en curso".to_string());
+        }
+        let handle = tokio::spawn(installer::install(
+            app.clone(),
+            base_path,
+            mc_version,
+            loader,
+            loader_version,
+            overrides_url,
+            mods_url,
+            modpack_id.clone(),
+            version,
+        ));
+        *current = Some(handle.abort_handle());
+        handle
+    };
+
+    let result = handle.await;
+    *app.state::<InstallState>().0.lock().unwrap() = None;
+
+    let error = match result {
+        Ok(Ok(())) => return Ok(()),
+        Ok(Err(e)) => e.to_string(),
+        Err(e) if e.is_cancelled() => INSTALL_CANCELLED.to_string(),
+        Err(e) => e.to_string(),
+    };
+
+    log::warn!("[commands::install_modpack] {} no se completó: {}", modpack_id, error);
+    // Una instalación nueva a medias no debe parecer instalada
+    if !existed {
+        tokio::fs::remove_dir_all(&instance_dir).await.ok();
+    }
+    Err(error)
+}
+
+#[tauri::command]
+pub fn cancel_install(state: State<'_, InstallState>) -> bool {
+    match state.0.lock().unwrap().take() {
+        Some(handle) => {
+            handle.abort();
+            true
+        }
+        None => false,
+    }
 }
 
 #[tauri::command]
@@ -128,7 +181,8 @@ pub async fn launch_modpack(
     base_path: String,
     modpack_id: String,
     mc_version: String,
-    forge_version: String,
+    loader: Option<String>,
+    loader_version: String,
     username: String,
     uuid: Option<String>,
     access_token: Option<String>,
@@ -164,7 +218,8 @@ pub async fn launch_modpack(
         base_path,
         modpack_id.clone(),
         mc_version,
-        forge_version,
+        loader.unwrap_or_else(|| "forge".to_string()),
+        loader_version,
         LaunchAuth::new(username, uuid, access_token),
         settings,
     )
