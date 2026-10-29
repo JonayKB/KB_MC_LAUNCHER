@@ -1,7 +1,7 @@
 use crate::installer::download;
 use crate::process_ext::NoConsoleWindow;
 use crate::installer::loaders::vanilla::{download_assets, download_libraries};
-use crate::installer::progress::{emit, ProgressPayload};
+use crate::installer::progress::{self, emit, ProgressPayload};
 use crate::installer::requirements::{
     check_java_by_minecraft_version, get_java_binary_async, install_java_by_minecraft_version,
 };
@@ -33,6 +33,7 @@ pub async fn install(
     debug!("[forge::install] launcher_root: {:?}", launcher_root);
 
     // ── 0. Java ───────────────────────────────────────────────
+    progress::sub_range(0, 15);
     info!(
         "[forge::install] Comprobando Java para MC {}...",
         mc_version
@@ -157,6 +158,7 @@ pub async fn install(
         installer_url
     );
 
+    progress::sub_range(15, 25);
     let installer_path = download::download_to_temp_with_progress(
         app,
         &installer_url,
@@ -172,11 +174,13 @@ pub async fn install(
         installer_path
     );
 
+    // Sin progreso propio: se queda al inicio del tramo hasta que termine
+    progress::sub_range(25, 55);
     emit(
         app,
         ProgressPayload::Step {
             step: "Ejecutando instalador de Forge...".into(),
-            percent: 40,
+            percent: 0,
         },
     );
 
@@ -243,6 +247,7 @@ pub async fn install(
 
     // ── 5. Libraries de Forge ─────────────────────────────────
     info!("[forge::install] Descargando libraries de Forge...");
+    progress::sub_range(55, 70);
     download_libraries(&forge_json, launcher_root, app, "Libraries Forge")
         .await
         .context("Fallo descargando libraries de Forge")?;
@@ -250,6 +255,7 @@ pub async fn install(
 
     // ── 6. Libraries de Minecraft ─────────────────────────────
     info!("[forge::install] Descargando libraries de Minecraft...");
+    progress::sub_range(70, 80);
     download_libraries(&mc_json, launcher_root, app, "Libraries Minecraft")
         .await
         .context("Fallo descargando libraries de Minecraft")?;
@@ -257,6 +263,7 @@ pub async fn install(
 
     // ── 7. Assets de vanilla ──────────────────────────────────
     info!("[forge::install] Descargando assets...");
+    progress::sub_range(80, 100);
     download_assets(&mc_json, launcher_root, app)
         .await
         .context("Fallo descargando assets")?;

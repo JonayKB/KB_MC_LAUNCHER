@@ -1,5 +1,5 @@
 use crate::installer::download;
-use crate::installer::progress::{emit, ProgressPayload};
+use crate::installer::progress::{self, emit, ProgressPayload};
 use crate::installer::requirements::{
     check_java_by_minecraft_version, install_java_by_minecraft_version,
 };
@@ -30,6 +30,8 @@ pub async fn prepare(app: &AppHandle, versions_dir: &Path, mc_version: &str) -> 
         .context("No se pudo determinar la raíz del launcher")?;
 
     // ── Java ──────────────────────────────────────────────────
+    // Tramos del paso (fabric usa hasta el 90% y deja el resto para sus libraries)
+    progress::sub_range(0, 5);
     emit(app, ProgressPayload::Step { step: "Comprobando Java...".into(), percent: 5 });
     if !check_java_by_minecraft_version(mc_version, launcher_root).await {
         install_java_by_minecraft_version(mc_version, launcher_root).await?;
@@ -65,6 +67,7 @@ pub async fn prepare(app: &AppHandle, versions_dir: &Path, mc_version: &str) -> 
     ).context("JSON de Minecraft inválido")?;
 
     // ── Jar del cliente ───────────────────────────────────────
+    progress::sub_range(5, 25);
     if !jar_path.exists() {
         let client_url = mc_json["downloads"]["client"]["url"]
             .as_str().context("URL del cliente no encontrada")?;
@@ -74,8 +77,11 @@ pub async fn prepare(app: &AppHandle, versions_dir: &Path, mc_version: &str) -> 
         ).await?;
     }
 
+    progress::sub_range(25, 50);
     download_libraries(&mc_json, launcher_root, app, "Libraries Minecraft").await?;
+    progress::sub_range(50, 90);
     download_assets(&mc_json, launcher_root, app).await?;
+    progress::sub_range(90, 100);
 
     Ok(mc_json)
 }

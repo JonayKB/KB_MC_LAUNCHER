@@ -14,6 +14,9 @@ export interface ProgressState {
     totalFiles?: number;
     speedFps?: number;
     mode: 'step' | 'download' | 'extract';
+    /** Paso actual (desde 1) y total; 0 si aún no se sabe */
+    stepIndex: number;
+    stepCount: number;
 }
 
 export type InstallStatus = 'running' | 'cancelling' | 'done' | 'error' | 'cancelled';
@@ -23,6 +26,8 @@ export interface InstallJob {
     name: string;
     version: string;
     isUpdate: boolean;
+    /** Desinstalación: sin progreso por pasos ni cancelación */
+    isUninstall?: boolean;
     status: InstallStatus;
     progress: ProgressState;
     error?: string;
@@ -33,6 +38,8 @@ interface InstallContextValue {
     isInstalling: boolean;
     /** Resuelve a true si terminó bien, false si falló o se canceló */
     startInstall: (modpack: ModpackVersion, opts: { name: string; basePath: string; isUpdate: boolean }) => Promise<boolean>;
+    /** Igual que startInstall: true si se desinstaló; el error se muestra en la notificación */
+    startUninstall: (modpack: ModpackVersion, opts: { name: string; basePath: string }) => Promise<boolean>;
     cancelInstall: () => Promise<void>;
     dismiss: () => void;
 }
@@ -51,11 +58,13 @@ const CANCELLED_ERROR = 'CANCELLED';
 const DONE_DISMISS_MS = 5000;
 
 function toProgress(p: InstallProgress): ProgressState {
+    const steps = { stepIndex: p.step_index, stepCount: p.step_count };
     if (p.type === 'download') {
         return {
             step: p.step,
             percent: p.percent,
             mode: 'download',
+            ...steps,
             downloadedBytes: p.downloaded_bytes,
             totalBytes: p.total_bytes,
             speedBps: p.speed_bps,
@@ -66,12 +75,13 @@ function toProgress(p: InstallProgress): ProgressState {
             step: p.step,
             percent: p.percent,
             mode: 'extract',
+            ...steps,
             extractedFiles: p.extracted_files,
             totalFiles: p.total_files,
             speedFps: p.speed_fps,
         };
     }
-    return { step: p.step, percent: p.percent, mode: 'step' };
+    return { step: p.step, percent: p.percent, mode: 'step', ...steps };
 }
 
 export function InstallProvider({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -109,7 +119,7 @@ export function InstallProvider({ children }: Readonly<{ children: React.ReactNo
             version: modpack.version,
             isUpdate,
             status: 'running',
-            progress: { step: 'Iniciando instalación...', percent: 0, mode: 'step' },
+            progress: { step: 'Iniciando instalación...', percent: 0, mode: 'step', stepIndex: 0, stepCount: 0 },
         });
 
         try {
@@ -151,13 +161,35 @@ export function InstallProvider({ children }: Readonly<{ children: React.ReactNo
         }
     }, []);
 
+    const startUninstall = useCallback<InstallContextValue['startUninstall']>(async (modpack, { name, basePath }) => {
+        if (dismissTimer.current) clearTimeout(dismissTimer.current);
+        setJob({
+            modpackId: modpack.modpackId,
+            name,
+            version: modpack.version,
+            isUpdate: false,
+            isUninstall: true,
+            status: 'running',
+            progress: { step: 'Eliminando archivos de la instancia...', percent: 0, mode: 'step', stepIndex: 0, stepCount: 0 },
+        });
+        try {
+            await invoke('uninstall_modpack', { basePath, modpackId: modpack.modpackId });
+            setJob(prev => prev && { ...prev, status: 'done', progress: { ...prev.progress, percent: 100 } });
+            dismissTimer.current = setTimeout(() => setJob(null), DONE_DISMISS_MS);
+            return true;
+        } catch (err) {
+            setJob(prev => prev && { ...prev, status: 'error', error: String(err) });
+            return false;
+        }
+    }, []);
+
     const cancelInstall = useCallback(async () => {
         setJob(prev => prev && prev.status === 'running' ? { ...prev, status: 'cancelling' } : prev);
         await invoke('cancel_install');
     }, []);
 
     return (
-        <InstallContext.Provider value={{ job, isInstalling, startInstall, cancelInstall, dismiss }}>
+        <InstallContext.Provider value={{ job, isInstalling, startInstall, startUninstall, cancelInstall, dismiss }}>
             {children}
         </InstallContext.Provider>
     );

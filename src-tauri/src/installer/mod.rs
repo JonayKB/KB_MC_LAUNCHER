@@ -25,6 +25,7 @@ pub async fn install(
     modpack_id: String,
     modpack_version: Option<String>,
 ) -> Result<()> {
+    progress::reset();
     let base = Path::new(&base_path);
     let versions_dir = base.join("versions");
     let instance_dir = base.join("instances").join(&modpack_id);
@@ -38,11 +39,13 @@ pub async fn install(
     }
     tokio::fs::create_dir_all(&mods_dir).await?;
 
+    // Pasos: 1 Minecraft + loader, 2 mods, 3 configuración (overrides)
+    progress::set_phase(1, 3, 0, 55);
     emit(
         &app,
         ProgressPayload::Step {
-            step: "Instalando loader...".into(),
-            percent: 5,
+            step: "Instalando Minecraft y el loader...".into(),
+            percent: 0,
         },
     );
     match loader.as_str() {
@@ -64,11 +67,14 @@ pub async fn install(
         }
     }
 
+    progress::set_phase(2, 3, 55, 85);
     let mods_zip = std::env::temp_dir().join("kblauncher_mods.zip");
     download::download_to(&mods_url, &mods_zip, Some(&app), "Descargando mods...").await?;
+    progress::set_phase(2, 3, 85, 90);
     extract::extract_zip(&mods_zip, &mods_dir, true, Some(&app), "Extrayendo mods...").await?;
     tokio::fs::remove_file(&mods_zip).await.ok();
 
+    progress::set_phase(3, 3, 90, 97);
     let overrides_zip = std::env::temp_dir().join("kblauncher_overrides.zip");
     download::download_to(
         &overrides_url,
@@ -77,6 +83,7 @@ pub async fn install(
         "Descargando overrides...",
     )
     .await?;
+    progress::set_phase(3, 3, 97, 100);
     extract::extract_zip(
         &overrides_zip,
         &instance_dir,
@@ -112,6 +119,7 @@ pub async fn update(
     modpack_id: String,
     modpack_version: Option<String>,
 ) -> Result<()> {
+    progress::reset();
     let base = Path::new(&base_path);
     let instance_dir = base.join("instances").join(&modpack_id);
     let mods_dir = instance_dir.join("mods");
@@ -123,11 +131,14 @@ pub async fn update(
     tokio::fs::remove_dir_all(&mods_dir).await?;
     tokio::fs::create_dir_all(&mods_dir).await?;
 
+    progress::set_phase(1, 2, 0, 80);
     let mods_zip = std::env::temp_dir().join("kblauncher_mods.zip");
     download::download_to(&mods_url, &mods_zip, Some(&app), "Descargando mods...").await?;
+    progress::set_phase(1, 2, 80, 88);
     extract::extract_zip(&mods_zip, &mods_dir, true, Some(&app), "Extrayendo mods...").await?;
     tokio::fs::remove_file(&mods_zip).await.ok();
 
+    progress::set_phase(2, 2, 88, 97);
     let overrides_zip = std::env::temp_dir().join("kblauncher_overrides.zip");
     download::download_to(
         &overrides_url,
@@ -136,6 +147,7 @@ pub async fn update(
         "Descargando overrides...",
     )
     .await?;
+    progress::set_phase(2, 2, 97, 100);
     extract::extract_zip(
         &overrides_zip,
         &instance_dir,

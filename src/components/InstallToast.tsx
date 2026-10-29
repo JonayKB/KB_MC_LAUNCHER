@@ -11,6 +11,11 @@ function toneOf(job: InstallJob): ToastTone {
 }
 
 function eyebrowOf(job: InstallJob): string {
+    if (job.isUninstall) {
+        if (job.status === 'done') return 'Desinstalado';
+        if (job.status === 'error') return 'Error al desinstalar';
+        return 'Desinstalando';
+    }
     switch (job.status) {
         case 'running': return job.isUpdate ? 'Actualizando' : 'Instalando';
         case 'cancelling': return 'Cancelando...';
@@ -81,14 +86,30 @@ export default function InstallToast() {
                 )}
             </div>
 
-            {active && (
+            {active && job.isUninstall && (
                 <>
                     <span style={toast.step}>{job.progress.step}</span>
+                    <div style={toast.track}>
+                        <div style={{ ...toast.bar(35, tone), animation: 'toast-indeterminate 1.2s ease-in-out infinite' }} />
+                    </div>
+                </>
+            )}
+
+            {active && !job.isUninstall && (
+                <>
+                    <span style={toast.step}>
+                        {job.progress.stepCount > 0 && (
+                            <span style={{ color: 'var(--text-faint)', fontWeight: 700 }}>
+                                Paso {job.progress.stepIndex}/{job.progress.stepCount} ·{' '}
+                            </span>
+                        )}
+                        {job.progress.step}
+                    </span>
                     <div style={toast.track}>
                         <div style={toast.bar(job.progress.percent, tone)} />
                     </div>
                     <div style={toast.footer}>
-                        <span>{detail ?? `${job.progress.percent}%`}</span>
+                        <span>{detail ? `${job.progress.percent}% · ${detail}` : `${job.progress.percent}%`}</span>
                         <button
                             style={toast.cancelBtn(job.status === 'cancelling')}
                             disabled={job.status === 'cancelling'}
@@ -101,7 +122,7 @@ export default function InstallToast() {
             )}
 
             {job.status === 'done' && (
-                <span style={toast.step}>Listo para jugar.</span>
+                <span style={toast.step}>{job.isUninstall ? 'Se han eliminado los archivos de la instancia.' : 'Listo para jugar.'}</span>
             )}
             {job.status === 'cancelled' && (
                 <span style={toast.step}>

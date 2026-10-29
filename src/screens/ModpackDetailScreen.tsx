@@ -31,7 +31,7 @@ export default function ModpackDetailScreen() {
     const location = useLocation();
     const name = (location.state as { name?: string } | null)?.name;
     const { basePath, ensureActiveSession } = useUser();
-    const { job, isInstalling: anyInstalling, startInstall } = useInstall();
+    const { job, isInstalling: anyInstalling, startInstall, startUninstall } = useInstall();
     const [loadError, setLoadError] = useState<string | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -173,16 +173,14 @@ export default function ModpackDetailScreen() {
 
         if (!confirmed) return;
 
-        try {
-            await invoke('uninstall_modpack', {
-                basePath,
-                modpackId: modpack.modpackId,
-            });
+        setLaunchError(null);
+        // El estado y los errores se muestran en la notificación global
+        const ok = await startUninstall(modpack, { name: name || modpack.modpackId, basePath });
+        if (ok) {
             setIsInstalled(false);
             setInstalledVersion(null);
-        } catch (err) {
-            console.error('Error desinstalando:', err);
-            setLaunchError(`Error desinstalando: ${err}`);
+        } else {
+            refreshInstallState();
         }
     }
 
@@ -264,7 +262,8 @@ export default function ModpackDetailScreen() {
 
     const playButtonLabel = () => {
         if (blockedByRelease && releaseAt !== null) return `Disponible en ${formatCountdown(releaseAt - now)}`;
-        if (installing) return `${isInstalled ? 'Actualizando' : 'Instalando'}... ${job?.progress.percent ?? 0}%`;
+        if (installing && job?.isUninstall) return 'Desinstalando...';
+        if (installing) return `${job?.isUpdate ? 'Actualizando' : 'Instalando'}... ${job?.progress.percent ?? 0}%`;
         if (anyInstalling) return 'Otra instalación en curso';
         if (launching) return 'Lanzando...';
         if (playing) return 'En juego';

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use tauri::AppHandle;
 use crate::installer::loaders::vanilla;
-use crate::installer::progress::{emit, ProgressPayload};
+use crate::installer::progress::{self, emit, ProgressPayload};
 
 const FABRIC_META: &str = "https://meta.fabricmc.net/v2/versions/loader";
 
@@ -42,6 +42,7 @@ pub async fn install(
     tokio::fs::create_dir_all(&version_dir).await?;
     tokio::fs::write(version_dir.join(format!("{}.json", id)), &profile_str).await?;
 
+    progress::sub_range(90, 100);
     vanilla::download_maven_libraries(&profile, launcher_root, app, "Libraries Fabric").await?;
 
     emit(app, ProgressPayload::Step { step: "Fabric instalado".into(), percent: 100 });

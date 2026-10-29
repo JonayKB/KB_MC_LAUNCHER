@@ -1,4 +1,10 @@
-export type InstallProgress =
+/** Lo añade progress::emit a todos los eventos: `percent` es el global de la instalación */
+interface StepInfo {
+  step_index: number;
+  step_count: number;
+}
+
+export type InstallProgress = StepInfo & (
   | { type: 'step'; step: string; percent: number }
   | {
       type: 'download';
@@ -15,7 +21,8 @@ export type InstallProgress =
       extracted_files: number;
       total_files: number;
       speed_fps: number;
-    };
+    }
+);
 
 // helpers
 export function formatBytes(bytes: number): string {

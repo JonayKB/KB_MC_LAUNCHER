@@ -82,7 +82,8 @@ function HeroCard({ item, lastPlayedAt }: Readonly<{ item: ModpackOverview; last
 
     let primaryLabel = 'Instalar';
     if (upcoming && status !== 'installed') primaryLabel = `Disponible en ${formatCountdown(releaseAt - now)}`;
-    else if (installingThis) primaryLabel = `Instalando... ${job?.progress.percent ?? 0}%`;
+    else if (installingThis && job?.isUninstall) primaryLabel = 'Desinstalando...';
+    else if (installingThis) primaryLabel = `${job?.isUpdate ? 'Actualizando' : 'Instalando'}... ${job?.progress.percent ?? 0}%`;
     else if (playing) primaryLabel = 'En juego';
     else if (launching) primaryLabel = 'Lanzando...';
     else if (status === 'installed') primaryLabel = 'Jugar';
