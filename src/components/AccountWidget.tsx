@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { Account } from '../types/account';
+import { Account, accountFromLogin } from '../types/account';
 import { useUser } from '../context/UserContext';
 import { widget as s } from '../styles/accountWidgetStyles';
 import { LoginCompleteResponse } from '../types/setup';
@@ -52,16 +52,7 @@ function AddAccountModal({
                 return;
             }
 
-            onAdded({
-                isOnline: true,
-                username: result.username,
-                uuid: result.uuid,
-                accessToken: result.access_token,
-                refreshToken: result.refresh_token,
-                tokenExpiresAt: Date.now() + result.expires_in * 1000,
-                skinHeadBase64: result.skin_head_base64,
-                isActual: true,
-            });
+            onAdded(accountFromLogin(result));
         } catch (err) {
             console.error('[AddAccount] Error login Microsoft:', err);
             setLoginError(`Error al iniciar sesión: ${err}`);

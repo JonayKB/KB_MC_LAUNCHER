@@ -76,6 +76,8 @@ struct LogBatch {
 #[serde(rename_all = "camelCase")]
 struct LogStatus {
     modpack_id: String,
+    /// Para el aviso de crash de la ventana principal
+    name: String,
     running: bool,
     killed: bool,
     exit_code: Option<i32>,
@@ -221,6 +223,7 @@ pub fn finish_session(app: &AppHandle, modpack_id: &str, exit_code: Option<i32>)
         };
         let status = LogStatus {
             modpack_id: modpack_id.to_string(),
+            name: session.name.clone(),
             running: false,
             killed: session.killed,
             exit_code,

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { UserProvider, useUser } from './context/UserContext';
 import UpdateChecker from './screens/UpdateCheckerScreen';
 import SetupScreen from './screens/SetupScreen';
@@ -9,16 +9,23 @@ import { ThemeProvider } from './context/ThemeContext';
 type AppStep = 'update' | 'setup' | 'app';
 
 function AppContent() {
-    const { isSetupDone, isLoading } = useUser();
+    const { isSetupDone, isLoading, expiredUsernames } = useUser();
     const [step, setStep] = useState<AppStep>('update');
+    const sessionExpired = expiredUsernames.length > 0;
 
     const isSetupDoneRef = useRef(isSetupDone);
     isSetupDoneRef.current = isSetupDone;
+    const sessionExpiredRef = useRef(sessionExpired);
+    sessionExpiredRef.current = sessionExpired;
 
+    // Si caduca la sesión con el launcher abierto, de vuelta al login
+    useEffect(() => {
+        if (sessionExpired && step === 'app') setStep('setup');
+    }, [sessionExpired, step]);
 
     const handleUpdateComplete = useCallback(() => {
 
-        if (isSetupDoneRef.current) {
+        if (isSetupDoneRef.current && !sessionExpiredRef.current) {
             setStep('app');
         } else {
             setStep('setup');

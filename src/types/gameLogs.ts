@@ -26,6 +26,7 @@ export interface LogBatch {
 /** Evento game_log_status */
 export interface LogStatus {
     modpackId: string;
+    name: string;
     running: boolean;
     killed: boolean;
     exitCode: number | null;

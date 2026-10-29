@@ -3,13 +3,15 @@ import { useUser } from '../context/UserContext';
 import { layout, logo, header, box, text, btn, input as inp } from '../styles/components';
 import { invoke } from '@tauri-apps/api/core';
 import { LoginCompleteResponse } from '../types/setup';
-import { accountFromLogin, validateOfflineUsername } from '../types/account';
+import { Account, accountFromLogin, upsertAccount, validateOfflineUsername } from '../types/account';
 
 type Step = 'owns_minecraft' | 'offline_username' | 'microsoft_prompt';
 
 export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () => void }>) {
-    const { setAccounts } = useUser();
-    const [step, setStep] = useState<Step>('owns_minecraft');
+    const { accounts, setAccounts, expiredUsernames, clearExpiredSession } = useUser();
+    const sessionExpired = expiredUsernames.length > 0;
+    // Si se llega por sesión caducada, directo a iniciar sesión con Microsoft
+    const [step, setStep] = useState<Step>(sessionExpired ? 'microsoft_prompt' : 'owns_minecraft');
     const [inputUsername, setInputUsername] = useState('');
     const [inputError, setInputError] = useState<string | null>(null);
     const [yesHovered, setYesHovered] = useState(false);
@@ -19,6 +21,13 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
     const [loginHovered, setLoginHovered] = useState(false);
     const [loginState, setLoginState] = useState<'idle' | 'waiting_code' | 'polling' | 'done'>('idle');
     const [loginError, setLoginError] = useState<string | null>(null);
+
+    // Se conservan las demás cuentas (al volver por sesión caducada puede haber otras)
+    function finish(account: Account) {
+        setAccounts(prev => upsertAccount(prev, account));
+        clearExpiredSession();
+        onComplete();
+    }
 
     function handleOwnsMinecraft(owns: boolean) {
         setStep(owns ? 'microsoft_prompt' : 'offline_username');
@@ -33,11 +42,8 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
                     'auth_microsoft'
                 );
 
-            setAccounts([accountFromLogin(result)]);
-
             setLoginState('done');
-
-            onComplete();
+            finish(accountFromLogin(result));
         } catch (e) {
             setLoginError(String(e));
             setLoginState('idle');
@@ -50,13 +56,12 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
             setInputError(error);
             return;
         }
-        const userAccount = {
+        finish({
             isOnline: false,
             username: name,
-            isActual: true
-        };
-        setAccounts([userAccount]);
-        onComplete();
+            uuid: `offline-${name}`,
+            isActual: true,
+        });
     }
     return (
         <div style={layout.fullscreenCenter}>
@@ -80,6 +85,13 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
                         {step === 'offline_username' && 'Nombre de usuario'}
                         {step === 'microsoft_prompt' && 'Cuenta Microsoft'}
                     </h2>
+                    {sessionExpired && (
+                        <div style={box.info}>
+                            <span style={text.info}>
+                                La sesión de {expiredUsernames.join(', ')} ha caducado. Vuelve a iniciar sesión para seguir jugando.
+                            </span>
+                        </div>
+                    )}
                     <p style={header.subtitle}>
                         {step === 'owns_minecraft' && '¿Tienes Minecraft Java Edition comprado?'}
                         {step === 'offline_username' && 'Elige tu nombre para el modo offline'}
@@ -164,6 +176,13 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
 
                         {loginError && (
                             <span style={text.fieldError}>{loginError}</span>
+                        )}
+
+                        {sessionExpired && accounts.length > 0 && loginState !== 'polling' && (
+                            <button
+                                style={btn.secondary}
+                                onClick={() => { clearExpiredSession(); onComplete(); }}
+                            >Usar otra de mis cuentas</button>
                         )}
                     </div>
                 )}

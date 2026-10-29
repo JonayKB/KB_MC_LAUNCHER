@@ -8,6 +8,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { useUser } from "../context/UserContext";
 import { useInstall } from "../context/InstallContext";
 import { useGameRunning } from "../hooks/useGameRunning";
+import { usePlaytime } from "../hooks/usePlaytime";
+import { formatDuration, formatTimeAgo } from "../repositories/PlayHistory";
 import { ensureModpackSettings, launchModpack } from "../repositories/ModpackActions";
 import { ask } from '@tauri-apps/plugin-dialog';
 import ModpackSettingsModal from "../components/ModpackSettingsModal";
@@ -34,6 +36,8 @@ export default function ModpackDetailScreen() {
     const [reloadKey, setReloadKey] = useState(0);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const playing = useGameRunning(modpack?.modpackId);
+    const playtime = usePlaytime(modpack?.modpackId);
+    const [historyOpen, setHistoryOpen] = useState(false);
     // La fecha de lanzamiento viene en index.json (latest.json no la trae)
     const [entry, setEntry] = useState<ModpackEntry | null>(null);
     const [indexChecked, setIndexChecked] = useState(false);
@@ -301,6 +305,31 @@ export default function ModpackDetailScreen() {
                                     </span>
                                 )}
                             </div>
+                            {playtime && playtime.sessionCount > 0 && (
+                                <div style={detail.playtimeBox}>
+                                    <button style={detail.playtimeSummary} onClick={() => setHistoryOpen(v => !v)}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+                                        <strong style={{ color: '#fff' }}>{formatDuration(playtime.totalSecs)}</strong> jugadas
+                                        <span style={{ opacity: 0.6 }}>· {playtime.sessionCount} {playtime.sessionCount === 1 ? 'sesión' : 'sesiones'}</span>
+                                        <span style={{ opacity: 0.6 }}>{historyOpen ? '▴' : '▾'}</span>
+                                    </button>
+                                    {historyOpen && (
+                                        <ul style={detail.sessionList}>
+                                            {playtime.sessions.slice(0, 8).map(s => (
+                                                <li key={s.startedAt} style={detail.sessionRow}>
+                                                    <span>
+                                                        {new Date(s.startedAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
+                                                        {' · '}
+                                                        {new Date(s.startedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                                                        <span style={{ opacity: 0.5 }}> ({formatTimeAgo(s.startedAt + s.durationSecs * 1000)})</span>
+                                                    </span>
+                                                    <span style={{ fontWeight: 700 }}>{formatDuration(s.durationSecs)}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                </div>
+                            )}
                             {launchError && (
                                 <span style={{
                                     fontSize: '12px',

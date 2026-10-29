@@ -23,11 +23,12 @@ const STATUS_LABELS: Record<ModpackStatus, string> = {
     'not-installed': 'No instalado',
 };
 
-function greeting(): string {
+function greeting(username?: string): string {
     const h = new Date().getHours();
-    if (h < 7 || h >= 21) return 'Buenas noches';
-    if (h < 14) return 'Buenos días';
-    return 'Buenas tardes';
+    let text = 'Buenas tardes';
+    if (h < 7 || h >= 21) text = 'Buenas noches';
+    else if (h < 14) text = 'Buenos días';
+    return username ? `${text}, ${username}` : text;
 }
 
 function formatGb(mb: number): string {
@@ -222,7 +223,7 @@ const icon = (d: React.ReactNode) => (
 
 export default function HomeScreen() {
     const navigate = useNavigate();
-    const { basePath } = useUser();
+    const { basePath, activeAccount } = useUser();
     const { items, error, reload } = useModpackOverview(basePath);
     const [recommended, setRecommended] = useState<RecommendedSettings | null>(null);
     const [launcherVersion, setLauncherVersion] = useState('');
@@ -266,7 +267,7 @@ export default function HomeScreen() {
                     <div>
                         <span style={home.eyebrow}>{today}</span>
                         <h1 style={home.title}>
-                            {greeting()}
+                            {greeting(activeAccount?.username)}
                         </h1>
                     </div>
                 </header>
