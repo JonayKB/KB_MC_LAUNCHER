@@ -6,6 +6,8 @@ mod installer;
 mod launcher;
 mod auth;
 mod logging;
+mod game_logs;
+mod process_ext;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -20,6 +22,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .manage(commands::InstallState::default())
+        .manage(game_logs::GameLogs::default())
         .setup(|app| {
             init_logging(app.handle());
             #[cfg(desktop)]
@@ -90,6 +93,9 @@ pub fn run() {
             commands::is_modpack_running,
             commands::get_installed_version,
             commands::cancel_install,
+            game_logs::get_game_logs,
+            game_logs::open_game_logs,
+            game_logs::kill_game,
         ])
         .manage(RunningInstances::default())
         .run(tauri::generate_context!())

@@ -2,15 +2,33 @@ use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use tokio::process::Command;
+#[cfg(target_os = "windows")]
+use crate::process_ext::NoConsoleWindow;
 use tracing::{error, info};
 
 fn get_required_java_version(mc_version: &str) -> &'static str {
-    match mc_version {
-        v if v.starts_with("1.21") => "21",
-        v if v.starts_with("1.20") => "17",
-        v if v.starts_with("1.19") => "17",
-        v if v.starts_with("1.18") => "17",
+    match required_java_major(mc_version) {
+        21 => "21",
+        17 => "17",
         _ => "8",
+    }
+}
+
+/// Versión mayor de Java que usa una versión de Minecraft.
+/// 1.20.5 y 1.20.6 ya necesitan Java 21, no 17 como el resto de la 1.20;
+/// la 1.17 necesita al menos Java 16.
+pub fn required_java_major(mc_version: &str) -> u32 {
+    let mut parts = mc_version.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+    let (_major, minor, patch) = (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    );
+    match (minor, patch) {
+        (m, _) if m >= 21 => 21,
+        (20, p) if p >= 5 => 21,
+        (m, _) if m >= 17 => 17,
+        _ => 8,
     }
 }
 
@@ -89,6 +107,7 @@ pub async fn install_java(version: &str, launcher_root: &Path) -> Result<()> {
                     temp_extract.display()
                 ),
             ])
+            .no_console_window()
             .status()
             .await?;
 
@@ -210,4 +229,20 @@ pub async fn get_java_binary_async(launcher_root: &Path, mc_version: &str) -> St
     }
 
     panic!("Java {} no instalado en el launcher", java_version);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::required_java_major;
+
+    #[test]
+    fn java_version_per_minecraft_version() {
+        assert_eq!(required_java_major("1.16.5"), 8);
+        assert_eq!(required_java_major("1.17.1"), 17);
+        assert_eq!(required_java_major("1.18.2"), 17);
+        assert_eq!(required_java_major("1.20.1"), 17);
+        assert_eq!(required_java_major("1.20.4"), 17);
+        assert_eq!(required_java_major("1.20.5"), 21);
+        assert_eq!(required_java_major("1.21.1"), 21);
+    }
 }

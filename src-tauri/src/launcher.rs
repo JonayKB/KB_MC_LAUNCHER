@@ -1,8 +1,12 @@
+use crate::game_logs;
 use crate::installer::loaders::fabric;
-use crate::installer::requirements::get_java_binary_async;
+use crate::process_ext::NoConsoleWindow;
+use crate::installer::requirements::{get_java_binary_async, required_java_major};
+use crate::installer::sysinfo::gc_args;
 use crate::RunningInstances;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::{debug, error, info, warn};
 pub struct LaunchSettings {
@@ -93,6 +97,7 @@ pub async fn launch(
     app: AppHandle,
     base_path: String,
     modpack_id: String,
+    modpack_name: String,
     mc_version: String,
     loader: String,
     loader_version: String,
@@ -216,30 +221,30 @@ pub async fn launch(
         // RAM desde settings
         format!("-Xms{}M", settings.min_ram_mb),
         format!("-Xmx{}M", settings.max_ram_mb),
-        "-XX:+UseG1GC".to_string(),
-        "-XX:+ParallelRefProcEnabled".to_string(),
-        "-XX:MaxGCPauseMillis=200".to_string(),
         "-Dminecraft.launcher.brand=kb-mc-launcher".to_string(),
         "-Dminecraft.launcher.version=1.0.0".to_string(),
         format!("-Djava.library.path={}", natives_dir.to_string_lossy()),
     ];
 
-    // Args extra del usuario
-    if !settings.extra_jvm_args.is_empty() {
-        for arg in settings.extra_jvm_args.split_whitespace() {
-            if arg.is_empty() {
-                continue;
-            }
-            if is_gc_arg(arg) {
-                warn!(
-                    "[launcher] Filtrando GC arg de extraJvmArgs del usuario: {}",
-                    arg
-                );
-                continue;
-            }
-            jvm_args.push(arg.to_string());
-        }
+    // ── Recolector de basura ──────────────────────────────────
+    // Si el usuario elige uno en sus args extra se respeta; si no, se elige
+    // según la versión de Java del modpack y la RAM asignada.
+    let user_args: Vec<&str> = settings.extra_jvm_args.split_whitespace().collect();
+    if let Some(user_gc) = user_args.iter().find(|a| is_gc_selector(a)) {
+        info!("[launcher] GC elegido por el usuario: {}", user_gc);
+    } else {
+        let java_major = required_java_major(&mc_version);
+        let gc = gc_args(java_major, settings.max_ram_mb, num_cpus::get());
+        info!(
+            "[launcher] GC automático: {} (Java {}, {}MB)",
+            gc.name, java_major, settings.max_ram_mb
+        );
+        jvm_args.extend(gc.args);
     }
+
+    // Args extra (los recomendados y los del usuario): van después de los
+    // automáticos para que, si se repite un flag, gane el del usuario
+    jvm_args.extend(user_args.iter().map(|a| a.to_string()));
     // Args JVM del JSON del loader (Forge/Fabric)
 
     if let Some(jvm_json_args) = loader_json["arguments"]["jvm"].as_array() {
@@ -401,12 +406,18 @@ pub async fn launch(
         };
         info!("[launcher]   [{}] {}", i, shown);
     }
-    match tokio::process::Command::new(&java_bin)
+    let mut command = tokio::process::Command::new(&java_bin);
+    command
         .args(&cmd_args)
         .current_dir(&instance_dir)
         .env("SHIM_MCCOMPAT", "0x800000001")
-        .spawn()
-    {
+        // La salida se muestra en la ventana de logs del launcher, no en una consola
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .no_console_window();
+
+    match command.spawn() {
         Ok(mut child) => {
             let pid = child.id().unwrap_or(0);
             info!("[launcher::launch] ✓ PID {:?}", pid);
@@ -421,6 +432,14 @@ pub async fn launch(
                 warn!("[launcher] RunningInstances no estaba registrado en el estado de Tauri");
             }
 
+            let (kill_rx, log_reader) = game_logs::start_session(
+                &app,
+                &modpack_id,
+                &modpack_name,
+                child.stdout.take(),
+                child.stderr.take(),
+            );
+
             app.emit(
                 "game_started",
                 serde_json::json!({
@@ -432,8 +451,20 @@ pub async fn launch(
             let app_clone = app.clone();
             let modpack_id_clone = modpack_id.clone();
             tokio::spawn(async move {
-                let status = child.wait().await;
+                let status = tokio::select! {
+                    status = child.wait() => status,
+                    // Si el emisor se descarta sin enviar, esta rama se ignora
+                    Ok(()) = kill_rx => {
+                        info!("[launcher::launch] Deteniendo '{}' a petición del usuario", modpack_id_clone);
+                        let _ = child.kill().await;
+                        child.wait().await
+                    }
+                };
                 let exit_code = status.ok().and_then(|s| s.code());
+
+                // Esperar a leer las últimas líneas antes de marcar la sesión como cerrada
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(3), log_reader).await;
+                game_logs::finish_session(&app_clone, &modpack_id_clone, exit_code);
                 info!(
                     "[launcher::launch] Proceso del modpack '{}' finalizado (code={:?})",
                     modpack_id_clone, exit_code
@@ -543,6 +574,20 @@ fn resolve_arg(
         .replace("${classpath_separator}", sep)
 }
 
+/// Flag que selecciona un recolector de basura concreto
+fn is_gc_selector(arg: &str) -> bool {
+    matches!(
+        arg,
+        "-XX:+UseG1GC"
+            | "-XX:+UseZGC"
+            | "-XX:+UseShenandoahGC"
+            | "-XX:+UseParallelGC"
+            | "-XX:+UseSerialGC"
+            | "-XX:+UseConcMarkSweepGC"
+    )
+}
+
+/// Flags de GC que traiga el JSON del loader: se ignoran para no chocar con los nuestros
 fn is_gc_arg(arg: &str) -> bool {
     matches!(
         arg,
@@ -561,6 +606,14 @@ fn is_gc_arg(arg: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gc_selector_only_matches_collector_choice() {
+        assert!(is_gc_selector("-XX:+UseZGC"));
+        assert!(is_gc_selector("-XX:+UseG1GC"));
+        assert!(!is_gc_selector("-XX:MaxGCPauseMillis=50"));
+        assert!(!is_gc_selector("-XX:-UseZGC"));
+    }
 
     #[test]
     fn offline_uuid_matches_vanilla() {

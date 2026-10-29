@@ -243,3 +243,195 @@ export const modal = {
     transition: 'background-color 0.15s',
   } as S,
 } as const;
+export type HintTone = 'ok' | 'info' | 'warn';
+
+const hintColor: Record<HintTone, string> = {
+  ok: 'var(--success)',
+  info: 'var(--text-muted)',
+  warn: 'var(--warning)',
+};
+
+/** Piezas del selector de RAM y de las secciones del modal */
+export const settingsUi = {
+  sectionHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+  } as S,
+
+  systemTag: {
+    fontSize: '11px',
+    color: 'var(--text-faint)',
+  } as S,
+
+  presetRow: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, 1fr)',
+    gap: '8px',
+  } as S,
+
+  presetBtn: (active: boolean, hovered: boolean): S => ({
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: '2px',
+    padding: '10px 12px',
+    borderRadius: 'var(--radius-md)',
+    border: `1px solid ${active ? 'var(--accent)' : hovered ? 'var(--border-strong)' : 'var(--border)'}`,
+    background: active ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+    color: 'var(--text-primary)',
+    cursor: 'pointer',
+    textAlign: 'left',
+    transition: 'border-color 0.15s, background-color 0.15s',
+  }),
+
+  presetLabel: (active: boolean): S => ({
+    fontFamily: 'var(--font-condensed)',
+    fontSize: '11px',
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: active ? 'var(--accent)' : 'var(--text-faint)',
+  }),
+
+  presetValue: {
+    fontFamily: 'var(--font-condensed)',
+    fontSize: '20px',
+    fontWeight: 800,
+  } as S,
+
+  bigValueRow: {
+    display: 'flex',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: '12px',
+  } as S,
+
+  bigValue: {
+    fontFamily: 'var(--font-condensed)',
+    fontSize: '28px',
+    fontWeight: 800,
+    lineHeight: 1,
+  } as S,
+
+  sourceTag: (auto: boolean): S => ({
+    fontFamily: 'var(--font-condensed)',
+    fontSize: '10px',
+    fontWeight: 700,
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase',
+    padding: '3px 8px',
+    borderRadius: 'var(--radius-sm)',
+    color: auto ? 'var(--success)' : 'var(--text-muted)',
+    border: `1px solid ${auto ? 'rgba(34,197,94,0.35)' : 'var(--border)'}`,
+  }),
+
+  memBar: {
+    display: 'flex',
+    height: '10px',
+    borderRadius: '5px',
+    overflow: 'hidden',
+    background: 'var(--bg-hover)',
+  } as S,
+
+  memGame: (percent: number, warn: boolean): S => ({
+    width: `${Math.min(100, Math.max(0, percent))}%`,
+    background: warn ? 'var(--warning)' : 'var(--accent)',
+    transition: 'width 0.15s, background-color 0.15s',
+  }),
+
+  memLegend: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '12px',
+    fontSize: '11px',
+    color: 'var(--text-faint)',
+    marginTop: '6px',
+  } as S,
+
+  legendDot: (color: string): S => ({
+    display: 'inline-block',
+    width: '8px',
+    height: '8px',
+    borderRadius: '2px',
+    background: color,
+    marginRight: '6px',
+  }),
+
+  hint: (tone: HintTone): S => ({
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '8px',
+    fontSize: '12px',
+    lineHeight: 1.45,
+    padding: '8px 10px',
+    borderRadius: 'var(--radius-md)',
+    border: `1px solid ${tone === 'warn' ? 'rgba(245,158,11,0.3)' : 'var(--border)'}`,
+    background: tone === 'warn' ? 'rgba(245,158,11,0.08)' : 'var(--bg-elevated)',
+    color: tone === 'ok' ? 'var(--text-secondary)' : hintColor[tone],
+  }),
+
+  hintIcon: (tone: HintTone): S => ({
+    display: 'flex',
+    flexShrink: 0,
+    marginTop: '1px',
+    color: hintColor[tone],
+  }),
+
+  toggleRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '16px',
+  } as S,
+
+  toggleText: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+  } as S,
+
+  toggleDesc: {
+    fontSize: '11px',
+    color: 'var(--text-faint)',
+    lineHeight: 1.4,
+  } as S,
+
+  collapseBtn: (hovered: boolean): S => ({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    padding: 0,
+    border: 'none',
+    background: 'none',
+    color: hovered ? 'var(--text-primary)' : 'var(--text-muted)',
+    cursor: 'pointer',
+  }),
+
+  chevron: (open: boolean): S => ({
+    display: 'flex',
+    transform: open ? 'rotate(180deg)' : 'none',
+    transition: 'transform 0.15s',
+  }),
+
+  sliderScale: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    fontSize: '10px',
+    color: 'var(--text-faint)',
+    marginTop: '2px',
+  } as S,
+
+  restoreBtn: (hovered: boolean): S => ({
+    marginRight: 'auto',
+    background: 'none',
+    border: 'none',
+    padding: '0 4px',
+    fontSize: '12px',
+    color: hovered ? 'var(--accent)' : 'var(--text-faint)',
+    cursor: 'pointer',
+    textDecoration: hovered ? 'underline' : 'none',
+  }),
+} as const;

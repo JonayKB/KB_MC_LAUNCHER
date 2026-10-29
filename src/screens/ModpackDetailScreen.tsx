@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
-import { ModpackVersion, LOADER_LABELS, resolveLoader } from "../types/modpack";
-import { fetchModpackVersion } from "../repositories/ModpackRepository";
+import { ModpackEntry, ModpackVersion, LOADER_LABELS, formatCountdown, formatReleaseDate, releaseTime, resolveLoader } from "../types/modpack";
+import { fetchModpackIndex, fetchModpackVersion } from "../repositories/ModpackRepository";
+import { useNow } from "../hooks/useNow";
 import { detail, loading } from "../styles/modpackDetailStyles";
 import { invoke } from "@tauri-apps/api/core";
 import { useUser } from "../context/UserContext";
@@ -9,8 +10,7 @@ import { useInstall } from "../context/InstallContext";
 import { useGameRunning } from "../hooks/useGameRunning";
 import { ensureModpackSettings, launchModpack } from "../repositories/ModpackActions";
 import { ask } from '@tauri-apps/plugin-dialog';
-import { ModpackSettings } from "../types/modpackSettings";
-import ModpackSettingsModal, { loadSettings } from "../components/ModpackSettingsModal";
+import ModpackSettingsModal from "../components/ModpackSettingsModal";
 const IMAGE_ROTATE_MS = 6000;
 
 
@@ -33,8 +33,21 @@ export default function ModpackDetailScreen() {
     const [loadError, setLoadError] = useState<string | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
     const [settingsOpen, setSettingsOpen] = useState(false);
-    const [modpackSettings, setModpackSettings] = useState<ModpackSettings | null>(null);
     const playing = useGameRunning(modpack?.modpackId);
+    // La fecha de lanzamiento viene en index.json (latest.json no la trae)
+    const [entry, setEntry] = useState<ModpackEntry | null>(null);
+    const [indexChecked, setIndexChecked] = useState(false);
+    useEffect(() => {
+        if (!id) return;
+        setIndexChecked(false);
+        fetchModpackIndex()
+            .then(index => setEntry(index.modpacks.find(m => m.id === id) ?? null))
+            .catch(() => setEntry(null))
+            .finally(() => setIndexChecked(true));
+    }, [id]);
+    const releaseAt = entry ? releaseTime(entry) : null;
+    const now = useNow(releaseAt, true);
+    const upcoming = releaseAt !== null && releaseAt > now;
     // Fetch modpack data
     useEffect(() => {
         if (!id) return;
@@ -95,8 +108,6 @@ export default function ModpackDetailScreen() {
 
     useEffect(() => {
         if (!modpack) return;
-        setModpackSettings(loadSettings(modpack.modpackId));
-
         const images = modpack?.images;
         if (!images || images.length === 0) return;
 
@@ -114,7 +125,7 @@ export default function ModpackDetailScreen() {
             return;
         }
         // Aplicar settings recomendados si el usuario no tiene los suyos
-        setModpackSettings(await ensureModpackSettings(modpack.modpackId));
+        await ensureModpackSettings(modpack.modpackId);
 
         setLaunchError(null);
         const ok = await startInstall(modpack, {
@@ -130,6 +141,15 @@ export default function ModpackDetailScreen() {
             refreshInstallState();
         }
     }
+    async function handleOpenLogs(modpack: ModpackVersion) {
+        try {
+            await invoke('open_game_logs', { modpackId: modpack.modpackId });
+        } catch (err) {
+            // Sin partida en esta sesión del launcher todavía no hay logs que mostrar
+            setLaunchError(String(err));
+        }
+    }
+
     async function handleOpenFiles(modpack: ModpackVersion) {
         if (!basePath) return;
         const instanceDir = `${basePath}/instances/${modpack.modpackId}`;
@@ -168,7 +188,7 @@ export default function ModpackDetailScreen() {
         setLaunchError(null);
         try {
             const account = await ensureActiveSession();
-            await launchModpack(modpack, basePath, account, modpackSettings ?? undefined);
+            await launchModpack(modpack, basePath, account, name || modpack.modpackId);
         } catch (err) {
             setLaunchError(`Error al lanzar: ${err}`);
         } finally {
@@ -216,6 +236,11 @@ export default function ModpackDetailScreen() {
             icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></svg>,
         },
         {
+            id: 'logs', label: 'Consola del juego', requiresInstall: true,
+            onClick: () => handleOpenLogs(modpack),
+            icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></svg>,
+        },
+        {
             id: 'files', label: 'Ver archivos', requiresInstall: true,
             onClick: () => handleOpenFiles(modpack),
             icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>,
@@ -227,7 +252,14 @@ export default function ModpackDetailScreen() {
         },
     ];
 
+    // Antes de la fecha no se puede instalar ni actualizar; jugar sí, si ya estaba instalado
+    const blockedByRelease = upcoming && (!isInstalled || needsUpdate);
+
+    // Mientras no se sepa la fecha de lanzamiento no se deja instalar
+    const playDisabled = isBusy || !basePath || blockedByRelease || (!indexChecked && !isInstalled);
+
     const playButtonLabel = () => {
+        if (blockedByRelease && releaseAt !== null) return `Disponible en ${formatCountdown(releaseAt - now)}`;
         if (installing) return `${isInstalled ? 'Actualizando' : 'Instalando'}... ${job?.progress.percent ?? 0}%`;
         if (anyInstalling) return 'Otra instalación en curso';
         if (launching) return 'Lanzando...';
@@ -245,7 +277,6 @@ export default function ModpackDetailScreen() {
                 modpackId={modpack.modpackId}
                 modpackName={name || modpack.modpackId}
                 onClose={() => setSettingsOpen(false)}
-                onSave={(s) => setModpackSettings(s)}
             />
         )}
             <div style={detail.screen(bgUrl)}>
@@ -259,6 +290,11 @@ export default function ModpackDetailScreen() {
                                 <span style={detail.metaTag}>MC {modpack.minecraftVersion}</span>
                                 <span style={detail.metaTag}>{LOADER_LABELS[loaderInfo.loader]} {loaderInfo.loaderVersion}</span>
                                 <span style={detail.metaTag}>v{modpack.version}</span>
+                                {upcoming && releaseAt !== null && (
+                                    <span style={{ ...detail.metaTag, color: 'var(--accent)' }}>
+                                        Lanzamiento: {formatReleaseDate(releaseAt)}
+                                    </span>
+                                )}
                                 {needsUpdate && (
                                     <span style={{ ...detail.metaTag, color: 'var(--warning)' }}>
                                         Instalada v{installedVersion}
@@ -282,10 +318,10 @@ export default function ModpackDetailScreen() {
                             <button
                                 style={{
                                     ...detail.playButton,
-                                    opacity: isBusy || !basePath ? 0.5 : 1,
-                                    cursor: isBusy || !basePath ? 'not-allowed' : 'pointer',
+                                    opacity: playDisabled ? 0.5 : 1,
+                                    cursor: playDisabled ? 'not-allowed' : 'pointer',
                                 }}
-                                disabled={isBusy || !basePath}
+                                disabled={playDisabled}
                                 onClick={() => isInstalled && !needsUpdate ? handlePlay(modpack) : handleInstall(modpack)}
                             >
                                 {playButtonLabel()}
@@ -296,7 +332,8 @@ export default function ModpackDetailScreen() {
                                     style={{ ...detail.menuButton, ...(menuOpen ? detail.menuButtonHover : {}) }}
                                     onClick={() => setMenuOpen((v) => !v)}
                                     aria-label="Más opciones"
-                                    disabled={isBusy}
+                                    // Abierto también en partida, para poder ver la consola
+                                    disabled={anyInstalling || launching}
                                 >
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                                         <circle cx="12" cy="5" r="2" />
@@ -308,7 +345,8 @@ export default function ModpackDetailScreen() {
                                 {menuOpen && (
                                     <div style={detail.dropdown}>
                                         {menuItems.map((menuItem, idx) => {
-                                            const disabled = menuItem.requiresInstall && !isInstalled;
+                                            const disabled = (menuItem.requiresInstall && !isInstalled)
+                                                || (menuItem.id === 'uninstall' && playing);
                                             return (
                                                 <div key={menuItem.id}>
                                                     <div

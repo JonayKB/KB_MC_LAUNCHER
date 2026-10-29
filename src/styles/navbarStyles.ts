@@ -65,6 +65,47 @@ export const item = {
     border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
   }),
 
+  thumbWrap: {
+    position: 'relative',
+    display: 'flex',
+    flexShrink: 0,
+  } as S,
+
+  /** Modpack que todavía no se ha lanzado */
+  thumbUpcoming: {
+    filter: 'grayscale(1) brightness(0.55)',
+  } as S,
+
+  lockBadge: {
+    position: 'absolute',
+    right: '-4px',
+    bottom: '-4px',
+    width: '18px',
+    height: '18px',
+    borderRadius: '50%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'var(--bg-elevated)',
+    border: '1px solid var(--border-strong)',
+    color: 'var(--text-muted)',
+  } as S,
+
+  nameCol: (expanded: boolean): S => ({
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '1px',
+    minWidth: 0,
+    overflow: 'hidden',
+    width: expanded ? 'auto' : 0,
+  }),
+
+  releaseHint: {
+    fontSize: '10px',
+    color: 'var(--text-faint)',
+    whiteSpace: 'nowrap',
+  } as S,
+
   name: (expanded: boolean, active: boolean): S => ({
     fontFamily: 'var(--font-condensed)',
     fontSize: '14px',

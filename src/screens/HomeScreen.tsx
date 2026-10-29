@@ -10,7 +10,8 @@ import { ModpackOverview, ModpackStatus, useModpackOverview } from "../hooks/use
 import { useGameRunning } from "../hooks/useGameRunning";
 import { ensureModpackSettings, launchModpack } from "../repositories/ModpackActions";
 import { formatTimeAgo, getLastPlayed, getPlayHistory } from "../repositories/PlayHistory";
-import { LOADER_LABELS, resolveLoader } from "../types/modpack";
+import { LOADER_LABELS, formatCountdown, formatReleaseDate, nextRelease, releaseTime, resolveLoader } from "../types/modpack";
+import { useNow } from "../hooks/useNow";
 import type { RecommendedSettings } from "../types/modpackSettings";
 import DiscordCard from "../components/DiscordCard";
 
@@ -50,6 +51,10 @@ function HeroCard({ item, lastPlayedAt }: Readonly<{ item: ModpackOverview; last
     const [ghostHovered, setGhostHovered] = useState(false);
 
     const { entry, latest, status } = item;
+    const releaseAt = releaseTime(entry);
+    // Cada segundo, para la cuenta atrás del botón
+    const now = useNow(releaseAt, true);
+    const upcoming = releaseAt !== null && releaseAt > now;
     const installingThis = isInstalling && job?.modpackId === latest?.modpackId;
     const image = latest?.images?.[0] ?? entry.imageUrl;
     const loader = latest ? resolveLoader(latest) : null;
@@ -61,7 +66,7 @@ function HeroCard({ item, lastPlayedAt }: Readonly<{ item: ModpackOverview; last
             setLaunching(true);
             try {
                 const account = await ensureActiveSession();
-                await launchModpack(latest, basePath, account);
+                await launchModpack(latest, basePath, account, entry.name);
             } catch (err) {
                 setError(`Error al lanzar: ${err}`);
             } finally {
@@ -75,19 +80,22 @@ function HeroCard({ item, lastPlayedAt }: Readonly<{ item: ModpackOverview; last
     }
 
     let primaryLabel = 'Instalar';
-    if (installingThis) primaryLabel = `Instalando... ${job?.progress.percent ?? 0}%`;
+    if (upcoming && status !== 'installed') primaryLabel = `Disponible en ${formatCountdown(releaseAt - now)}`;
+    else if (installingThis) primaryLabel = `Instalando... ${job?.progress.percent ?? 0}%`;
     else if (playing) primaryLabel = 'En juego';
     else if (launching) primaryLabel = 'Lanzando...';
     else if (status === 'installed') primaryLabel = 'Jugar';
     else if (status === 'update-available') primaryLabel = 'Actualizar';
-    const primaryDisabled = !latest || !basePath || isInstalling || playing || launching;
+    // Antes de la fecha no se puede instalar ni actualizar (sí jugar si ya estaba instalado)
+    const blockedByRelease = upcoming && status !== 'installed';
+    const primaryDisabled = !latest || !basePath || isInstalling || playing || launching || blockedByRelease;
 
-    const eyebrow = lastPlayedAt
-        ? `Continuar jugando · ${formatTimeAgo(lastPlayedAt)}`
-        : 'Modpack destacado';
+    let eyebrow = lastPlayedAt ? `Continuar jugando · ${formatTimeAgo(lastPlayedAt)}` : 'Modpack destacado';
+    if (upcoming) eyebrow = `Próximamente · ${formatReleaseDate(releaseAt)}`;
 
     return (
         <section style={home.hero(image)}>
+            {upcoming && <div style={home.upcomingVeil} />}
             <div style={home.heroContent}>
                 <span style={home.heroEyebrow}>{eyebrow}</span>
                 <h2 style={home.heroTitle}>{entry.name}</h2>
@@ -96,9 +104,11 @@ function HeroCard({ item, lastPlayedAt }: Readonly<{ item: ModpackOverview; last
                     {latest && <span style={home.tag}>MC {latest.minecraftVersion}</span>}
                     {loader && <span style={home.tag}>{LOADER_LABELS[loader.loader]} {loader.loaderVersion}</span>}
                     {latest && <span style={home.tag}>v{latest.version}</span>}
-                    <span style={{ ...home.tag, color: status === 'update-available' ? 'var(--warning)' : home.tag.color }}>
-                        {STATUS_LABELS[status]}
-                    </span>
+                    {!upcoming && (
+                        <span style={{ ...home.tag, color: status === 'update-available' ? 'var(--warning)' : home.tag.color }}>
+                            {STATUS_LABELS[status]}
+                        </span>
+                    )}
                 </div>
                 <div style={home.heroActions}>
                     {latest && (
@@ -142,9 +152,11 @@ function StatTile({ icon, label, value, hint }: Readonly<{ icon: React.ReactNode
     );
 }
 
-function ModpackCard({ item, onOpen }: Readonly<{ item: ModpackOverview; onOpen: () => void }>) {
+function ModpackCard({ item, now, onOpen }: Readonly<{ item: ModpackOverview; now: number; onOpen: () => void }>) {
     const [hovered, setHovered] = useState(false);
     const { entry, latest, status } = item;
+    const releaseAt = releaseTime(entry);
+    const upcoming = releaseAt !== null && releaseAt > now;
     const loader = latest ? resolveLoader(latest) : null;
     return (
         <button
@@ -154,16 +166,31 @@ function ModpackCard({ item, onOpen }: Readonly<{ item: ModpackOverview; onOpen:
             onClick={onOpen}
         >
             <div style={home.cardImage(entry.imageUrl ?? latest?.images?.[0])}>
-                <span style={home.statusBadge(status)}>
-                    <span style={home.statusDot(status)} />
-                    {STATUS_LABELS[status]}
-                </span>
+                {upcoming ? (
+                    <>
+                        <div style={home.upcomingVeil} />
+                        <span style={home.upcomingBadge}>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+                            Próximamente
+                        </span>
+                    </>
+                ) : (
+                    <span style={home.statusBadge(status)}>
+                        <span style={home.statusDot(status)} />
+                        {STATUS_LABELS[status]}
+                    </span>
+                )}
             </div>
             <div style={home.cardBody}>
                 <span style={home.cardName}>{entry.name}</span>
                 {latest && loader && (
                     <span style={home.cardMeta}>
                         MC {latest.minecraftVersion} · {LOADER_LABELS[loader.loader]} · v{latest.version}
+                    </span>
+                )}
+                {upcoming && (
+                    <span style={home.releaseLine}>
+                        Disponible el {formatReleaseDate(releaseAt)} · <span style={home.countdown}>en {formatCountdown(releaseAt - now)}</span>
                     </span>
                 )}
                 {entry.description && <span style={home.cardDesc}>{entry.description}</span>}
@@ -195,7 +222,7 @@ const icon = (d: React.ReactNode) => (
 
 export default function HomeScreen() {
     const navigate = useNavigate();
-    const { activeAccount, basePath } = useUser();
+    const { basePath } = useUser();
     const { items, error, reload } = useModpackOverview(basePath);
     const [recommended, setRecommended] = useState<RecommendedSettings | null>(null);
     const [launcherVersion, setLauncherVersion] = useState('');
@@ -208,12 +235,16 @@ export default function HomeScreen() {
     }, []);
 
     const lastPlayedId = getLastPlayed(history);
+    const now = useNow(items ? nextRelease(items.map(i => i.entry)) : null);
     const featured = useMemo(() => {
         if (!items || items.length === 0) return null;
-        return items.find(i => i.entry.id === lastPlayedId || i.latest?.modpackId === lastPlayedId)
-            ?? items.find(i => i.status === 'update-available')
+        const released = items.filter(i => (releaseTime(i.entry) ?? 0) <= now);
+        // Un modpack aún no lanzado solo se destaca si no hay ninguno disponible
+        return released.find(i => i.entry.id === lastPlayedId || i.latest?.modpackId === lastPlayedId)
+            ?? released.find(i => i.status === 'update-available')
+            ?? released[0]
             ?? items[0];
-    }, [items, lastPlayedId]);
+    }, [items, lastPlayedId, now]);
     const featuredLastPlayed = featured
         ? history[featured.latest?.modpackId ?? featured.entry.id] ?? history[featured.entry.id]
         : undefined;
@@ -235,7 +266,7 @@ export default function HomeScreen() {
                     <div>
                         <span style={home.eyebrow}>{today}</span>
                         <h1 style={home.title}>
-                            {greeting()}{activeAccount?.username ? `, ${activeAccount.username}` : ''}
+                            {greeting()}
                         </h1>
                     </div>
                 </header>
@@ -254,12 +285,6 @@ export default function HomeScreen() {
                 )}
 
                 <div style={home.stats}>
-                    <StatTile
-                        icon={icon(<><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" /><circle cx="12" cy="7" r="4" /></>)}
-                        label="Cuenta"
-                        value={activeAccount?.username ?? 'Sin cuenta'}
-                        hint={activeAccount ? (activeAccount.isOnline ? 'Microsoft' : 'Offline') : undefined}
-                    />
                     <StatTile
                         icon={icon(<><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /></>)}
                         label="Modpacks"
@@ -289,7 +314,7 @@ export default function HomeScreen() {
                     ) : items && items.length > 0 ? (
                         <div style={home.grid}>
                             {items.map(item => (
-                                <ModpackCard key={item.entry.id} item={item} onOpen={() => openModpack(navigate, item)} />
+                                <ModpackCard key={item.entry.id} item={item} now={now} onOpen={() => openModpack(navigate, item)} />
                             ))}
                         </div>
                     ) : null}

@@ -1,4 +1,5 @@
 use crate::installer::download;
+use crate::process_ext::NoConsoleWindow;
 use crate::installer::loaders::vanilla::{download_assets, download_libraries};
 use crate::installer::progress::{emit, ProgressPayload};
 use crate::installer::requirements::{
@@ -193,6 +194,7 @@ pub async fn install(
         ])
         // Si se cancela la instalación, matar también el instalador
         .kill_on_drop(true)
+        .no_console_window()
         .output()
         .await
         .context("No se pudo ejecutar Java")?;

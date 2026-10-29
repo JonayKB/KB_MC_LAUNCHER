@@ -84,13 +84,92 @@ fn recommend_resolution(screen_w: u32, screen_h: u32) -> (u32, u32) {
     // Fallback: 854x480
     (854, 480)
 }
+/// Recolector de basura elegido para una partida
+#[derive(Debug, PartialEq, Eq)]
+pub struct GcChoice {
+    pub name: &'static str,
+    pub args: Vec<String>,
+}
+
+/// Elige el recolector de basura según la versión de Java y la RAM asignada.
+///
+/// - Java 21+ con 8GB o más: ZGC generacional, pausas de menos de 1ms.
+///   En Java 21-22 hay que activarlo con `-XX:+ZGenerational`; desde la 23 es
+///   el modo por defecto y en la 24 el flag ya no existe.
+/// - Resto: G1 ajustado para Minecraft (flags de Aikar) si hay 4GB o más,
+///   o G1 básico con menos memoria.
+pub fn gc_args(java_major: u32, max_ram_mb: u32, cpu_cores: usize) -> GcChoice {
+    if java_major >= 21 && max_ram_mb >= 8192 {
+        let mut args = vec!["-XX:+UseZGC".to_string()];
+        if java_major < 23 {
+            args.push("-XX:+ZGenerational".to_string());
+        }
+        return GcChoice { name: "ZGC generacional", args };
+    }
+
+    let mut args: Vec<String> = vec![
+        "-XX:+UseG1GC".to_string(),
+        "-XX:+ParallelRefProcEnabled".to_string(),
+        "-XX:MaxGCPauseMillis=200".to_string(),
+    ];
+    let name = if max_ram_mb >= 4096 {
+        args.extend(
+            [
+                "-XX:+UnlockExperimentalVMOptions",
+                "-XX:G1NewSizePercent=30",
+                "-XX:G1MaxNewSizePercent=40",
+                "-XX:G1HeapRegionSize=8M",
+                "-XX:G1ReservePercent=20",
+                "-XX:G1HeapWastePercent=5",
+                "-XX:G1MixedGCCountTarget=4",
+                "-XX:InitiatingHeapOccupancyPercent=15",
+                "-XX:G1MixedGCLiveThresholdPercent=90",
+                "-XX:G1RSetUpdatingPauseTimePercent=5",
+                "-XX:SurvivorRatio=32",
+                "-XX:MaxTenuringThreshold=1",
+            ]
+            .map(String::from),
+        );
+        "G1 optimizado"
+    } else {
+        "G1 básico"
+    };
+
+    if cpu_cores >= 8 {
+        args.push(format!("-XX:ConcGCThreads={}", cpu_cores / 4));
+        args.push(format!("-XX:ParallelGCThreads={}", cpu_cores / 2));
+    } else if cpu_cores >= 4 {
+        args.push("-XX:ConcGCThreads=2".to_string());
+        args.push("-XX:ParallelGCThreads=2".to_string());
+    }
+
+    GcChoice { name, args }
+}
+
+/// RAM máxima recomendada para Minecraft con mods según la RAM total.
+///
+/// No crece en proporción: por encima de ~12GB un modpack no va más rápido y
+/// el recolector de basura tarda más; y con poca RAM hay que dejar margen al
+/// sistema operativo. 8GB → 4GB · 16GB → 8GB · 32GB o más → 12GB.
+pub fn recommend_max_ram_mb(total_mb: u64) -> u32 {
+    let total_gb = (total_mb + 512) / 1024;
+    let gb = match total_gb {
+        0..=4 => 2,
+        5..=6 => 3,
+        7..=8 => 4,
+        9..=12 => 6,
+        13..=16 => 8,
+        17..=24 => 10,
+        _ => 12,
+    };
+    gb * 1024
+}
+
 pub fn recommend_settings(info: &SystemInfo) -> RecommendedSettings {
     let total = info.total_ram_mb;
     let (window_width, window_height) = recommend_resolution(info.screen_width, info.screen_height);
 
-    // Max RAM: 50% de la RAM total directamente
-    // Mínimo 2GB, máximo 16GB
-    let max_ram_mb = (total / 2).max(2048).min(16384) as u32;
+    let max_ram_mb = recommend_max_ram_mb(total);
 
     if total.saturating_sub(max_ram_mb as u64) < 2048 {
         warn!(
@@ -99,61 +178,25 @@ pub fn recommend_settings(info: &SystemInfo) -> RecommendedSettings {
         );
     }
 
-    // Min RAM: 25% del max, mínimo 512MB
-    let min_ram_mb = (max_ram_mb / 4).max(512);
+    // Min RAM (Xms): la mitad del máximo, sin pasar de 4GB. Reservar de golpe
+    // demasiada memoria solo alarga el arranque sin mejorar el rendimiento.
+    let min_ram_mb = (max_ram_mb / 2).clamp(1024, 4096);
 
     info!(
         "[sysinfo] RAM recomendada: min {}MB max {}MB (total: {}MB)",
         min_ram_mb, max_ram_mb, total
     );
 
-    // ── GC según RAM ──────────────────────────────────────────
-    let mut args: Vec<String> = Vec::new();
-
-    if max_ram_mb >= 7680 {
-        // ZGC — desde Java 21 es generacional por defecto, no necesita flag extra
-        args.push("-XX:+UseZGC".to_string());
-        // ZGenerational eliminado en Java 24, no añadirlo
-        // UseStringDeduplication no compatible con ZGC, no añadirlo
-        info!("[sysinfo] GC: ZGC (max RAM >= 7680MB, ~16GB físicos)");
-    } else if max_ram_mb >= 3840 {
-        args.push("-XX:+UseG1GC".to_string());
-        args.push("-XX:+ParallelRefProcEnabled".to_string());
-        args.push("-XX:MaxGCPauseMillis=200".to_string());
-        args.push("-XX:+UnlockExperimentalVMOptions".to_string());
-        args.push("-XX:G1NewSizePercent=20".to_string());
-        args.push("-XX:G1ReservePercent=20".to_string());
-        args.push("-XX:G1HeapRegionSize=32M".to_string());
-        args.push("-XX:G1HeapWastePercent=5".to_string());
-        args.push("-XX:G1MixedGCCountTarget=4".to_string());
-        args.push("-XX:InitiatingHeapOccupancyPercent=15".to_string());
-        args.push("-XX:G1MixedGCLiveThresholdPercent=90".to_string());
-        args.push("-XX:G1RSetUpdatingPauseTimePercent=5".to_string());
-        args.push("-XX:SurvivorRatio=32".to_string());
-        args.push("-XX:+UseStringDeduplication".to_string()); // solo G1GC
-        info!("[sysinfo] GC: G1GC ajustado (max RAM 3840-7680MB)");
-    } else {
-        args.push("-XX:+UseG1GC".to_string());
-        args.push("-XX:MaxGCPauseMillis=200".to_string());
-        info!("[sysinfo] GC: G1GC básico (max RAM < 3840MB)");
-    }
-
-    // Threads — solo para G1GC, ZGC los gestiona automáticamente
-    if max_ram_mb < 7680 {
-        if info.cpu_cores >= 8 {
-            args.push(format!("-XX:ConcGCThreads={}", info.cpu_cores / 4));
-            args.push(format!("-XX:ParallelGCThreads={}", info.cpu_cores / 2));
-        } else if info.cpu_cores >= 4 {
-            args.push("-XX:ConcGCThreads=2".to_string());
-            args.push("-XX:ParallelGCThreads=2".to_string());
-        }
-    }
-
+    // El recolector de basura no se fija aquí: depende de la versión de Java
+    // del modpack y de la RAM elegida, así que lo decide el launcher al lanzar
+    // (ver `gc_args`).
     // ── Optimizaciones generales ──────────────────────────────
-    args.push("-XX:+DisableExplicitGC".to_string());
-    args.push("-XX:AllocatePrefetchStyle=1".to_string());
-    args.push("-Dfml.readTimeout=120".to_string());
-    args.push("-Dfml.loginTimeout=120".to_string());
+    let mut args: Vec<String> = vec![
+        "-XX:+DisableExplicitGC".to_string(),
+        "-XX:AllocatePrefetchStyle=1".to_string(),
+        "-Dfml.readTimeout=120".to_string(),
+        "-Dfml.loginTimeout=120".to_string(),
+    ];
 
     let nio_size = if max_ram_mb >= 8192 { 512 } else { 256 };
     args.push(format!("-XX:MaxDirectMemorySize={}M", nio_size));
@@ -229,4 +272,31 @@ fn get_total_ram_mb() -> u64 {
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 fn get_total_ram_mb() -> u64 {
     4096
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{gc_args, recommend_max_ram_mb};
+
+    #[test]
+    fn zgc_only_with_java_21_and_enough_ram() {
+        assert_eq!(gc_args(21, 8192, 8).args, vec!["-XX:+UseZGC", "-XX:+ZGenerational"]);
+        // Desde Java 23 el modo generacional es el de por defecto
+        assert_eq!(gc_args(25, 12288, 8).args, vec!["-XX:+UseZGC"]);
+        // Java 17 (MC 1.18-1.20.4) no tiene ZGC generacional: G1
+        assert_eq!(gc_args(17, 12288, 8).name, "G1 optimizado");
+        assert_eq!(gc_args(21, 6144, 8).name, "G1 optimizado");
+        assert_eq!(gc_args(17, 3072, 4).name, "G1 básico");
+    }
+
+    #[test]
+    fn ram_recommendation_by_tier() {
+        assert_eq!(recommend_max_ram_mb(4096), 2048);
+        assert_eq!(recommend_max_ram_mb(8192), 4096);
+        // 16GB físicos suelen reportarse algo por debajo (~15.6GB)
+        assert_eq!(recommend_max_ram_mb(15_900), 8192);
+        assert_eq!(recommend_max_ram_mb(16384), 8192);
+        assert_eq!(recommend_max_ram_mb(32768), 12288);
+        assert_eq!(recommend_max_ram_mb(65536), 12288);
+    }
 }

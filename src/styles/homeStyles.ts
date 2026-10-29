@@ -86,6 +86,7 @@ export const home = {
   }),
 
   heroContent: {
+    position: 'relative',
     display: 'flex',
     flexDirection: 'column',
     gap: '12px',
@@ -188,6 +189,43 @@ export const home = {
     animation: 'pulse 1.4s ease-in-out infinite',
   } as S,
 
+  // ── Modpacks aún no lanzados ────────────────────────────────
+  /** Capa que pone en gris lo que hay debajo (imagen del hero o de la tarjeta) */
+  upcomingVeil: {
+    position: 'absolute',
+    inset: 0,
+    backdropFilter: 'grayscale(1) brightness(0.7)',
+    WebkitBackdropFilter: 'grayscale(1) brightness(0.7)',
+    pointerEvents: 'none',
+  } as S,
+
+  upcomingBadge: {
+    ...condensedLabel,
+    position: 'absolute',
+    top: '10px',
+    left: '10px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontSize: '10px',
+    padding: '3px 8px',
+    borderRadius: 'var(--radius-sm)',
+    background: 'rgba(8,8,9,0.8)',
+    color: 'var(--text-secondary)',
+    zIndex: 1,
+  } as S,
+
+  releaseLine: {
+    fontSize: '12px',
+    color: 'var(--text-secondary)',
+  } as S,
+
+  countdown: {
+    fontVariantNumeric: 'tabular-nums',
+    color: 'var(--accent)',
+    fontWeight: 500,
+  } as S,
+
   // ── Stats ───────────────────────────────────────────────────
   stats: {
     display: 'grid',
@@ -284,6 +322,7 @@ export const home = {
 
   statusBadge: (status: ModpackStatus): S => ({
     ...condensedLabel,
+    zIndex: 1,
     position: 'absolute',
     top: '10px',
     left: '10px',

@@ -113,6 +113,24 @@ Each modpack publishes a `latest.json` at `https://me.jonaykb.com/modpacks/<id>/
 }
 ```
 
+The modpack list lives in `index.json`. An entry can set `release_date` (ISO 8601 with time and zone) to announce a modpack before it can be downloaded: until then its icon is shown greyed out with the release date and a countdown, and installing is disabled. Entries without `release_date` are available right away.
+
+```json
+{
+  "modpacks": [
+    {
+      "id": "mypack",
+      "name": "My Pack",
+      "description": "Short description",
+      "imageUrl": "https://.../icon.png",
+      "release_date": "2026-11-15T18:00:00+01:00"
+    }
+  ]
+}
+```
+
+This check runs on the player's clock, so it is a display gate only: don't upload the mods/overrides files until the release date if they must stay private.
+
 `loader` can be `forge` (default) or `fabric`. Older files that only set `forgeVersion` keep working as Forge. When `version` changes, installed players get an **Update** button; updating replaces the whole `mods/` folder.
 
 ## Releases
