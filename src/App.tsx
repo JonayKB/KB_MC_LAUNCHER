@@ -12,7 +12,8 @@ export default function App() {
                 <main
                     style={{
                         marginLeft: COLLAPSED_WIDTH,
-                        width: '100%',
+                        flex: 1,
+                        minWidth: 0,
                         minHeight: '100vh',
                     }}
                 >

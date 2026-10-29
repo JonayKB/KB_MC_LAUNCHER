@@ -3,7 +3,7 @@ import { useUser } from '../context/UserContext';
 import { layout, logo, header, box, text, btn, input as inp } from '../styles/components';
 import { invoke } from '@tauri-apps/api/core';
 import { LoginCompleteResponse } from '../types/setup';
-import { accountFromLogin } from '../types/account';
+import { accountFromLogin, validateOfflineUsername } from '../types/account';
 
 type Step = 'owns_minecraft' | 'offline_username' | 'microsoft_prompt';
 
@@ -15,6 +15,8 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
     const [yesHovered, setYesHovered] = useState(false);
     const [noHovered, setNoHovered] = useState(false);
     const [continueHovered, setContinueHovered] = useState(false);
+    const [backHovered, setBackHovered] = useState(false);
+    const [loginHovered, setLoginHovered] = useState(false);
     const [loginState, setLoginState] = useState<'idle' | 'waiting_code' | 'polling' | 'done'>('idle');
     const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -43,12 +45,9 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
     }
     function handleOfflineSubmit() {
         const name = inputUsername.trim();
-        if (name.length < 3 || name.length > 16) {
-            setInputError('El nombre debe tener entre 3 y 16 caracteres');
-            return;
-        }
-        if (!/^[a-zA-Z0-9_]+$/.test(name)) {
-            setInputError('Solo letras, números y guiones bajos');
+        const error = validateOfflineUsername(name);
+        if (error) {
+            setInputError(error);
             return;
         }
         const userAccount = {
@@ -127,10 +126,24 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
                     </div>
                 )}
 
+                {step !== 'owns_minecraft' && loginState !== 'polling' && (
+                    <button
+                        style={{ ...btn.secondary, ...(backHovered ? btn.secondaryHover : {}), order: 1 }}
+                        onMouseEnter={() => setBackHovered(true)}
+                        onMouseLeave={() => setBackHovered(false)}
+                        onClick={() => { setStep('owns_minecraft'); setInputError(null); setLoginError(null); }}
+                    >Volver</button>
+                )}
+
                 {step === 'microsoft_prompt' && (
                     <div style={layout.col('16px')}>
                         {loginState === 'idle' && (
-                            <button onClick={handleMicrosoftLogin} style={btn.primary}>
+                            <button
+                                onClick={handleMicrosoftLogin}
+                                style={{ ...btn.primary, ...(loginHovered ? btn.primaryHover : {}) }}
+                                onMouseEnter={() => setLoginHovered(true)}
+                                onMouseLeave={() => setLoginHovered(false)}
+                            >
                                 Iniciar sesión con Microsoft
                             </button>
                         )}
