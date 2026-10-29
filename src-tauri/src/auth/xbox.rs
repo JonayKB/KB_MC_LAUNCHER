@@ -31,9 +31,7 @@ pub async fn authenticate(client: &reqwest::Client, ms_access_token: &str) -> Re
 
     let status = resp.status();
     let body = resp.text().await.context("Error leyendo respuesta XBL")?;
-    log::info!("[microsoft] token body: {}", body);
-
-    log::info!("[xbox] XBL status: {} | body: {}", status, body);
+    log::info!("[xbox] XBL status: {}", status);
 
     if !status.is_success() {
         anyhow::bail!("Xbox Live devolvió {}: {}", status, body);

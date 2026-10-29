@@ -10,6 +10,46 @@ pub struct LaunchSettings {
     pub window_height: u32,
     pub extra_jvm_args: String,
 }
+/// Datos de sesión con los que se lanza el juego
+pub struct LaunchAuth {
+    pub username: String,
+    pub uuid: String,
+    pub access_token: String,
+    pub user_type: &'static str,
+}
+
+impl LaunchAuth {
+    /// Cuenta Microsoft (online) si hay uuid y token; si no, cuenta offline
+    pub fn new(username: String, uuid: Option<String>, access_token: Option<String>) -> Self {
+        match (uuid, access_token) {
+            (Some(uuid), Some(access_token)) if !uuid.is_empty() && !access_token.is_empty() => {
+                Self {
+                    username,
+                    uuid,
+                    access_token,
+                    user_type: "msa",
+                }
+            }
+            _ => Self {
+                uuid: offline_uuid(&username),
+                username,
+                access_token: "0".to_string(),
+                user_type: "legacy",
+            },
+        }
+    }
+}
+
+/// UUID offline igual que el cliente vanilla:
+/// `UUID.nameUUIDFromBytes("OfflinePlayer:<nombre>")` (MD5, versión 3)
+pub fn offline_uuid(username: &str) -> String {
+    use md5::{Digest, Md5};
+    let mut bytes: [u8; 16] = Md5::digest(format!("OfflinePlayer:{}", username).as_bytes()).into();
+    bytes[6] = (bytes[6] & 0x0f) | 0x30;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 impl Default for LaunchSettings {
     fn default() -> Self {
         Self {
@@ -27,9 +67,10 @@ pub async fn launch(
     modpack_id: String,
     mc_version: String,
     forge_version: String,
-    username: String,
+    auth: LaunchAuth,
     settings: LaunchSettings,
-) -> Result<()> {
+) -> Result<tokio::process::Child> {
+    let username = auth.username.clone();
     let base = Path::new(&base_path);
     let instance_dir = base.join("instances").join(&modpack_id);
     let versions_dir = base.join("versions");
@@ -193,7 +234,7 @@ pub async fn launch(
                     &instance_dir,
                     &libs_dir,
                     &mc_version,
-                    &username,
+                    &auth,
                 );
                 if !resolved.is_empty() {
                     jvm_args.push(resolved);
@@ -215,7 +256,7 @@ pub async fn launch(
                         &instance_dir,
                         &libs_dir,
                         &mc_version,
-                        &username,
+                        &auth,
                     );
                     if !resolved.is_empty() {
                         jvm_args.push(resolved);
@@ -235,7 +276,7 @@ pub async fn launch(
                                 &instance_dir,
                                 &libs_dir,
                                 &mc_version,
-                                &username,
+                                &auth,
                             );
                             if !resolved.is_empty() {
                                 jvm_args.push(resolved);
@@ -263,11 +304,11 @@ pub async fn launch(
         "--assetIndex".to_string(),
         mc_version.clone(),
         "--uuid".to_string(),
-        "0".to_string(),
+        auth.uuid.clone(),
         "--accessToken".to_string(),
-        "0".to_string(),
+        auth.access_token.clone(),
         "--userType".to_string(),
-        "legacy".to_string(),
+        auth.user_type.to_string(),
         "--versionType".to_string(),
         "release".to_string(),
     ];
@@ -297,7 +338,7 @@ pub async fn launch(
                     &instance_dir,
                     &libs_dir,
                     &mc_version,
-                    &username,
+                    &auth,
                 );
                 game_args.push(resolved);
             }
@@ -312,7 +353,13 @@ pub async fn launch(
     log::info!("[launcher::launch] Lanzando con {} args", cmd_args.len());
     log::info!("[launcher] CMD ARGS COMPLETOS:");
     for (i, arg) in cmd_args.iter().enumerate() {
-        log::info!("[launcher]   [{}] {}", i, arg);
+        // Nunca escribir el token de sesión en los logs
+        let shown = if *arg == auth.access_token && auth.user_type == "msa" {
+            "***"
+        } else {
+            arg.as_str()
+        };
+        log::info!("[launcher]   [{}] {}", i, shown);
     }
     match tokio::process::Command::new(&java_bin)
         .args(&cmd_args)
@@ -321,7 +368,7 @@ pub async fn launch(
     {
         Ok(child) => {
             log::info!("[launcher::launch] ✓ PID {:?}", child.id());
-            Ok(())
+            Ok(child)
         }
         Err(e) => {
             log::error!("[launcher::launch] Error lanzando '{}': {}", java_bin, e);
@@ -384,17 +431,17 @@ fn resolve_arg(
     instance_dir: &Path,
     libs_dir: &Path,
     mc_version: &str,
-    username: &str,
+    auth: &LaunchAuth,
 ) -> String {
     let sep = if cfg!(windows) { ";" } else { ":" };
     arg.replace("${game_directory}", &instance_dir.to_string_lossy())
         .replace("${assets_root}", &format!("{}/assets", base_path))
         .replace("${assets_index_name}", mc_version)
         .replace("${version_name}", mc_version)
-        .replace("${auth_player_name}", username)
-        .replace("${auth_uuid}", "0")
-        .replace("${auth_access_token}", "0")
-        .replace("${user_type}", "legacy")
+        .replace("${auth_player_name}", &auth.username)
+        .replace("${auth_uuid}", &auth.uuid)
+        .replace("${auth_access_token}", &auth.access_token)
+        .replace("${user_type}", auth.user_type)
         .replace("${version_type}", "release")
         .replace(
             "${natives_directory}",
@@ -419,4 +466,29 @@ fn is_gc_arg(arg: &str) -> bool {
         || arg.starts_with("-XX:G1")
         || arg.starts_with("-XX:MaxGCPauseMillis")
         || arg.starts_with("-XX:+ParallelRefProcEnabled")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offline_uuid_matches_vanilla() {
+        // Valor de UUID.nameUUIDFromBytes("OfflinePlayer:Notch") en Java
+        assert_eq!(offline_uuid("Notch"), "b50ad385829d3141a2167e7d7539ba7f");
+    }
+
+    #[test]
+    fn auth_without_token_is_offline() {
+        let auth = LaunchAuth::new("Steve".into(), Some("abc".into()), None);
+        assert_eq!(auth.user_type, "legacy");
+        assert_eq!(auth.uuid, offline_uuid("Steve"));
+    }
+
+    #[test]
+    fn auth_with_token_is_msa() {
+        let auth = LaunchAuth::new("Steve".into(), Some("abc".into()), Some("tok".into()));
+        assert_eq!(auth.user_type, "msa");
+        assert_eq!(auth.access_token, "tok");
+    }
 }

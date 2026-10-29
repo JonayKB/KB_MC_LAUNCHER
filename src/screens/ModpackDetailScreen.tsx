@@ -30,6 +30,7 @@ export default function ModpackDetailScreen() {
     const [modpack, setModpack] = useState<ModpackVersion | null>(null);
     const [imageIndex, setImageIndex] = useState(0);
     const [isInstalled, setIsInstalled] = useState(false);
+    const [installedVersion, setInstalledVersion] = useState<string | null>(null);
     const [installing, setInstalling] = useState(false);
     const [launching, setLaunching] = useState(false);
     const [launchError, setLaunchError] = useState<string | null>(null);
@@ -40,20 +41,41 @@ export default function ModpackDetailScreen() {
     const unlistenRef = useRef<UnlistenFn | null>(null);
     const location = useLocation();
     const name = (location.state as { name?: string } | null)?.name;
-    const { basePath, accounts } = useUser();
+    const { basePath, ensureActiveSession } = useUser();
+    const [playing, setPlaying] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const [reloadKey, setReloadKey] = useState(0);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [modpackSettings, setModpackSettings] = useState<ModpackSettings | null>(null);
     // Fetch modpack data
     useEffect(() => {
-        const fetchData = async () => {
-            if (id) {
-                const modpackData = await fetchModpackVersion(id);
+        if (!id) return;
+        let cancelled = false;
+        setModpack(null);
+        setLoadError(null);
+        fetchModpackVersion(id)
+            .then((modpackData) => {
+                if (cancelled) return;
                 setModpack(modpackData);
                 setImageIndex(0);
-            }
-        };
-        fetchData();
-    }, [id]);
+            })
+            .catch((err) => {
+                if (!cancelled) setLoadError(String(err));
+            });
+        return () => { cancelled = true; };
+    }, [id, reloadKey]);
+
+    // Estado del juego (sobrevive a cambiar de pantalla gracias a Rust)
+    useEffect(() => {
+        if (!modpack) return;
+        const modpackId = modpack.modpackId;
+        invoke<boolean>('is_game_running', { modpackId }).then(setPlaying).catch(() => { });
+        const unlisteners = [
+            listen<string>('game_started', (e) => { if (e.payload === modpackId) setPlaying(true); }),
+            listen<string>('game_exited', (e) => { if (e.payload === modpackId) setPlaying(false); }),
+        ];
+        return () => { unlisteners.forEach(p => p.then(un => un())); };
+    }, [modpack]);
 
 
     // Comprobar instalación cuando tenemos modpack y basePath
@@ -63,6 +85,10 @@ export default function ModpackDetailScreen() {
             basePath,
             modpackId: modpack.modpackId,
         }).then(setIsInstalled).catch(() => setIsInstalled(false));
+        invoke<string | null>('get_installed_version', {
+            basePath,
+            modpackId: modpack.modpackId,
+        }).then(setInstalledVersion).catch(() => setInstalledVersion(null));
     }, [modpack, basePath]);
 
     // Rotación de imágenes
@@ -172,8 +198,10 @@ export default function ModpackDetailScreen() {
                 overridesUrl: modpack.overridesUrl,
                 modsUrl: modpack.modsUrl,
                 modpackId: modpack.modpackId,
+                version: modpack.version,
             });
             setIsInstalled(true);
+            setInstalledVersion(modpack.version);
         } catch (err) {
             console.error('Error durante la instalación:', err);
             setLaunchError(`Error de instalación: ${err}`);
@@ -209,7 +237,7 @@ export default function ModpackDetailScreen() {
                 modpackId: modpack.modpackId,
             });
             setIsInstalled(false);
-            console.log('Modpack desinstalado:', modpack.modpackId);
+            setInstalledVersion(null);
         } catch (err) {
             console.error('Error desinstalando:', err);
             setLaunchError(`Error desinstalando: ${err}`);
@@ -222,12 +250,15 @@ export default function ModpackDetailScreen() {
         setLaunchError(null);
         const s = modpackSettings;
         try {
+            const account = await ensureActiveSession();
             await invoke('launch_modpack', {
                 basePath,
                 modpackId: modpack.modpackId,
                 mcVersion: modpack.minecraftVersion,
                 forgeVersion: modpack.forgeVersion,
-                username: accounts.find(a => a.isActual)?.username ?? 'Player',
+                username: account.username ?? 'Player',
+                uuid: account.isOnline ? account.uuid : null,
+                accessToken: account.isOnline ? account.accessToken : null,
                 minRamMb: s?.minRamMb ?? 512,
                 maxRamMb: s?.maxRamMb ?? 4096,
                 fullscreen: s?.fullscreen ?? true,
@@ -242,6 +273,20 @@ export default function ModpackDetailScreen() {
         }
     }
 
+    if (!modpack && loadError) {
+        return (
+            <div style={detail.screen(null)}>
+                <div style={loading.wrap}>
+                    <span style={loading.text}>No se pudo cargar la información del modpack.</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-faint)', maxWidth: '420px', textAlign: 'center' }}>{loadError}</span>
+                    <button style={{ ...detail.menuButton, width: 'auto', padding: '0 16px' }} onClick={() => setReloadKey(k => k + 1)}>
+                        Reintentar
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     if (!modpack) {
         return (
             <div style={detail.screen(null)}>
@@ -254,7 +299,9 @@ export default function ModpackDetailScreen() {
     }
 
     const bgUrl = modpack.images?.[imageIndex] ?? null;
-    const isBusy = installing || launching;
+    const isBusy = installing || launching || playing;
+    // Sin versión registrada (instalación antigua) no se fuerza la actualización
+    const needsUpdate = isInstalled && installedVersion !== null && installedVersion !== modpack.version;
 
     const menuItems = [
         {
@@ -277,6 +324,8 @@ export default function ModpackDetailScreen() {
     const playButtonLabel = () => {
         if (installing) return 'Instalando...';
         if (launching) return 'Lanzando...';
+        if (playing) return 'En juego';
+        if (needsUpdate) return 'Actualizar';
         if (isInstalled) return 'Jugar';
         return 'Instalar';
     };
@@ -300,7 +349,7 @@ export default function ModpackDetailScreen() {
                     <div style={installOverlay.wrap}>
                         <div style={installOverlay.card}>
                             <div style={installOverlay.header}>
-                                <span style={installOverlay.title}>Instalando modpack</span>
+                                <span style={installOverlay.title}>{isInstalled ? 'Actualizando modpack' : 'Instalando modpack'}</span>
                                 <span style={installOverlay.step}>{progress.step}</span>
                             </div>
 
@@ -381,6 +430,12 @@ export default function ModpackDetailScreen() {
                             <div style={detail.metaRow}>
                                 <span style={detail.metaTag}>MC {modpack.minecraftVersion}</span>
                                 <span style={detail.metaTag}>Forge {modpack.forgeVersion}</span>
+                                <span style={detail.metaTag}>v{modpack.version}</span>
+                                {needsUpdate && (
+                                    <span style={{ ...detail.metaTag, color: 'var(--warning)' }}>
+                                        Instalada v{installedVersion}
+                                    </span>
+                                )}
                             </div>
                             {launchError && (
                                 <span style={{
@@ -403,7 +458,7 @@ export default function ModpackDetailScreen() {
                                     cursor: isBusy || !basePath ? 'not-allowed' : 'pointer',
                                 }}
                                 disabled={isBusy || !basePath}
-                                onClick={() => isInstalled ? handlePlay(modpack) : handleInstall(modpack)}
+                                onClick={() => isInstalled && !needsUpdate ? handlePlay(modpack) : handleInstall(modpack)}
                             >
                                 {playButtonLabel()}
                             </button>

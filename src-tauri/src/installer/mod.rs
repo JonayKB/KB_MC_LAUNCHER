@@ -12,6 +12,9 @@ use std::path::Path;
 use tauri::AppHandle;
 use progress::emit;
 
+/// Fichero dentro de la instancia con la versión del modpack instalada
+pub const INSTALLED_VERSION_FILE: &str = ".kb_version";
+
 pub async fn install(
     app: AppHandle,
     base_path: String,
@@ -21,6 +24,7 @@ pub async fn install(
     overrides_url: String,
     mods_url: String,
     modpack_id: String,
+    version: Option<String>,
 ) -> Result<()> {
     let base = Path::new(&base_path);
     let versions_dir = base.join("versions");
@@ -28,6 +32,11 @@ pub async fn install(
     let mods_dir = instance_dir.join("mods");
 
     tokio::fs::create_dir_all(&versions_dir).await?;
+    // Los mods los gestiona el modpack: al actualizar se reemplazan enteros
+    // para no dejar versiones antiguas mezcladas con las nuevas
+    if mods_dir.exists() {
+        tokio::fs::remove_dir_all(&mods_dir).await?;
+    }
     tokio::fs::create_dir_all(&mods_dir).await?;
 
     emit(&app, ProgressPayload::Step { step: "Instalando loader...".into(), percent: 5 });
@@ -58,6 +67,10 @@ pub async fn install(
     download::download_to(&overrides_url, &overrides_zip, Some(&app), "Descargando overrides...").await?;
     extract::extract_zip(&overrides_zip, &instance_dir, true, Some(&app), "Aplicando overrides...").await?;
     tokio::fs::remove_file(&overrides_zip).await.ok();
+
+    if let Some(version) = version {
+        tokio::fs::write(instance_dir.join(INSTALLED_VERSION_FILE), version).await?;
+    }
 
     emit(&app, ProgressPayload::Step { step: "Instalación completada".into(), percent: 100 });
     Ok(())

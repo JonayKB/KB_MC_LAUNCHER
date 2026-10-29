@@ -9,6 +9,7 @@ mod auth;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
+        .manage(commands::RunningGames::default())
         .setup(|app| {
             #[cfg(desktop)]
             app.handle()
@@ -72,7 +73,10 @@ pub fn run() {
             commands::get_recommended_settings,
             commands::clear_all_cache,
             commands::restart_app,
-            commands::auth_microsoft
+            commands::auth_microsoft,
+            commands::refresh_microsoft,
+            commands::is_game_running,
+            commands::get_installed_version
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

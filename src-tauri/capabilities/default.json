@@ -12,44 +12,6 @@
     "process:allow-exit",
     "updater:default",
     "dialog:default",
-    "fs:allow-read-file",
-    "shell:allow-open",
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        {
-          "program": "docker",
-          "args": [
-            "--version"
-          ]
-        },
-        {
-          "program": "docker",
-          "args": [
-            "compose",
-            "up",
-            "-d"
-          ]
-        },
-        {
-          "program": "sh",
-          "args": [
-            "-c",
-            {
-              "validator": ".*"
-            }
-          ]
-        },
-        {
-          "program": "powershell",
-          "args": [
-            "-Command",
-            {
-              "validator": ".*"
-            }
-          ]
-        }
-      ]
-    }
+    "shell:allow-open"
   ]
 }

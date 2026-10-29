@@ -8,6 +8,8 @@ pub struct MinecraftProfile {
     pub uuid: String,
     pub username: String,
     pub access_token: String,
+    /// Segundos de validez del token de Minecraft
+    pub expires_in: u64,
     pub skin_url: Option<String>,
 }
 
@@ -35,7 +37,11 @@ pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result
         .await
         .context("Error leyendo respuesta Minecraft")?;
 
-    log::info!("[minecraft] status={} body={}", status, body);
+    log::info!("[minecraft] status={}", status);
+
+    if !status.is_success() {
+        anyhow::bail!("Minecraft Services devolvió {}", status);
+    }
 
     let mc_resp: serde_json::Value = serde_json::from_str(&body)?;
 
@@ -43,6 +49,7 @@ pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result
         .as_str()
         .context("access_token de Minecraft no encontrado")?
         .to_string();
+    let expires_in = mc_resp["expires_in"].as_u64().unwrap_or(86400);
 
     log::info!("[minecraft] ✓ Token de Minecraft obtenido");
 
@@ -115,6 +122,7 @@ pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result
         uuid,
         username,
         access_token,
+        expires_in,
         skin_url,
     })
 }

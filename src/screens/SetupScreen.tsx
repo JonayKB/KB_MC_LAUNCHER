@@ -3,6 +3,7 @@ import { useUser } from '../context/UserContext';
 import { layout, logo, header, box, text, btn, input as inp } from '../styles/components';
 import { invoke } from '@tauri-apps/api/core';
 import { LoginCompleteResponse } from '../types/setup';
+import { accountFromLogin } from '../types/account';
 
 type Step = 'owns_minecraft' | 'offline_username' | 'microsoft_prompt';
 
@@ -23,22 +24,14 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
     async function handleMicrosoftLogin() {
         try {
             setLoginState('polling');
+            setLoginError(null);
 
             const result =
                 await invoke<LoginCompleteResponse>(
                     'auth_microsoft'
                 );
 
-            const userAccount = {
-                isOnline: true,
-                username: result.username,
-                uuid: result.uuid,
-                accessToken: result.access_token,
-                refreshToken: result.refresh_token,
-                expiresIn: result.expires_in,
-                isActual: true
-            };
-            setAccounts([userAccount]);
+            setAccounts([accountFromLogin(result)]);
 
             setLoginState('done');
 
@@ -91,7 +84,7 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
                     <p style={header.subtitle}>
                         {step === 'owns_minecraft' && '¿Tienes Minecraft Java Edition comprado?'}
                         {step === 'offline_username' && 'Elige tu nombre para el modo offline'}
-                        {step === 'microsoft_prompt' && 'Iniciarás sesión al lanzar el juego'}
+                        {step === 'microsoft_prompt' && 'Se abrirá tu navegador para iniciar sesión'}
                     </p>
                 </div>
 

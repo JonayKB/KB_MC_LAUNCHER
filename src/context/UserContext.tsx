@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Account } from '../types/account';
+import { Account, accountFromLogin } from '../types/account';
+import { LoginCompleteResponse } from '../types/setup';
 
 interface UserContextValue {
     isSetupDone: boolean;
@@ -9,6 +10,9 @@ interface UserContextValue {
     isLoading: boolean;
     accounts: Account[];
     setAccounts: React.Dispatch<React.SetStateAction<Account[]>>;
+    activeAccount: Account | null;
+    /** Devuelve la cuenta activa con un token válido, refrescándolo si hace falta */
+    ensureActiveSession: () => Promise<Account>;
 }
 
 const UserContext = createContext<UserContextValue>({
@@ -18,7 +22,8 @@ const UserContext = createContext<UserContextValue>({
     isLoading: true,
     accounts: [],
     setAccounts: () => { },
-
+    activeAccount: null,
+    ensureActiveSession: () => Promise.reject(new Error('UserProvider no montado')),
 });
 
 
@@ -27,6 +32,8 @@ export function useUser() {
 }
 
 const LS_KEY = 'kb_launcher_user';
+/** Margen antes de la caducidad a partir del cual se refresca el token */
+const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
 
 export function UserProvider({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -38,14 +45,7 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
     useEffect(() => {
         try {
             const raw = localStorage.getItem(LS_KEY);
-            console.log('[UserContext] localStorage raw:', raw);
-            if (raw) {
-                const data: Account[] = JSON.parse(raw);
-                console.log('[UserContext] datos parseados:', data);
-                setAccounts(data);
-            } else {
-                console.log('[UserContext] localStorage vacío');
-            }
+            if (raw) setAccounts(JSON.parse(raw));
         } catch (e) {
             console.error('[UserContext] error leyendo localStorage:', e);
         }
@@ -61,22 +61,47 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
 
     // ── Persistir cambios ─────────────────────────────────────
     useEffect(() => {
-        console.log('[UserContext] intento persistir — accounts:', accounts);
+        if (isLoading) return;
         if (accounts.length === 0) {
             localStorage.removeItem(LS_KEY);
             return;
         }
         localStorage.setItem(LS_KEY, JSON.stringify(accounts));
-    }, [accounts]);
+    }, [accounts, isLoading]);
 
     function resetSetup() {
         localStorage.removeItem(LS_KEY);
         setAccounts([]);
     }
 
-    const isSetupDone = accounts.length > 0;
+    const activeAccount = accounts.find(a => a.isActual) ?? accounts[0] ?? null;
 
-    console.log('[UserContext] render — isSetupDone:', isSetupDone, '| isLoading:', isLoading);
+    const ensureActiveSession = useCallback(async (): Promise<Account> => {
+        if (!activeAccount) throw new Error('No hay ninguna cuenta seleccionada');
+        if (!activeAccount.isOnline) return activeAccount;
+
+        const stillValid = activeAccount.accessToken
+            && activeAccount.expiresAt
+            && activeAccount.expiresAt - REFRESH_MARGIN_MS > Date.now();
+        if (stillValid) return activeAccount;
+
+        if (!activeAccount.refreshToken) {
+            throw new Error('La sesión de Microsoft ha caducado. Vuelve a iniciar sesión con tu cuenta.');
+        }
+
+        const result = await invoke<LoginCompleteResponse>('refresh_microsoft', {
+            refreshToken: activeAccount.refreshToken,
+        });
+        const refreshed: Account = {
+            ...accountFromLogin(result),
+            // Si no llega skin nueva, conservar la anterior
+            skinHead: result.skin_head_base64 ?? activeAccount.skinHead,
+        };
+        setAccounts(prev => prev.map(a => a.uuid === refreshed.uuid ? refreshed : a));
+        return refreshed;
+    }, [activeAccount]);
+
+    const isSetupDone = accounts.length > 0;
 
     return (
         <UserContext.Provider value={{
@@ -86,6 +111,8 @@ export function UserProvider({ children }: Readonly<{ children: React.ReactNode 
             isLoading,
             accounts,
             setAccounts,
+            activeAccount,
+            ensureActiveSession,
         }}>
             {children}
         </UserContext.Provider>

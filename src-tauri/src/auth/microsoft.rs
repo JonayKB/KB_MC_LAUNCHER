@@ -2,21 +2,32 @@ use anyhow::{Context, Result};
 use axum::{extract::Query, response::Html, routing::get, Router};
 use oauth2::{
     basic::BasicClient, AuthUrl, AuthorizationCode, ClientId, CsrfToken, PkceCodeChallenge,
-    RedirectUrl, Scope, TokenResponse, TokenUrl,
+    RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl,
 };
 use std::collections::HashMap;
 use tokio::sync::oneshot;
 
 pub const CLIENT_ID: &str = "85d576e3-a3f9-41da-96f9-afdbe46cefc8";
+const TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
 
-pub async fn login() -> Result<String> {
+pub struct MicrosoftTokens {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+}
+
+fn to_tokens<T: TokenResponse>(token: &T) -> MicrosoftTokens {
+    MicrosoftTokens {
+        access_token: token.access_token().secret().to_string(),
+        refresh_token: token.refresh_token().map(|t| t.secret().to_string()),
+    }
+}
+
+pub async fn login() -> Result<MicrosoftTokens> {
     let client = BasicClient::new(ClientId::new(CLIENT_ID.to_string()))
         .set_auth_uri(AuthUrl::new(
             "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize".to_string(),
         )?)
-        .set_token_uri(TokenUrl::new(
-            "https://login.microsoftonline.com/consumers/oauth2/v2.0/token".to_string(),
-        )?)
+        .set_token_uri(TokenUrl::new(TOKEN_URL.to_string())?)
         .set_redirect_uri(RedirectUrl::new(
             "http://127.0.0.1:47821/callback".to_string(),
         )?);
@@ -56,13 +67,21 @@ pub async fn login() -> Result<String> {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:47821").await?;
 
-    tokio::spawn(async move {
+    let server = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
 
-    open::that(auth_url.as_str())?;
+    if let Err(e) = open::that(auth_url.as_str()) {
+        server.abort();
+        return Err(e.into());
+    }
 
-    let code = rx.await?;
+    // Liberar el puerto siempre, para permitir otro inicio de sesión después
+    let code = tokio::time::timeout(std::time::Duration::from_secs(300), rx).await;
+    server.abort();
+    let code = code
+        .context("Tiempo de espera agotado para el inicio de sesión")?
+        .context("El inicio de sesión se canceló")?;
 
     let http_client = reqwest::Client::new();
 
@@ -73,5 +92,26 @@ pub async fn login() -> Result<String> {
         .await
         .context("Error obteniendo token Microsoft")?;
 
-    Ok(token.access_token().secret().to_string())
+    Ok(to_tokens(&token))
+}
+
+/// Obtiene un nuevo access token de Microsoft a partir del refresh token guardado
+pub async fn refresh(refresh_token: &str) -> Result<MicrosoftTokens> {
+    let client = BasicClient::new(ClientId::new(CLIENT_ID.to_string()))
+        .set_token_uri(TokenUrl::new(TOKEN_URL.to_string())?);
+
+    let http_client = reqwest::Client::new();
+
+    let token = client
+        .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
+        .request_async(&http_client)
+        .await
+        .context("Error refrescando token Microsoft")?;
+
+    let mut tokens = to_tokens(&token);
+    // Microsoft puede no rotar el refresh token: conservar el anterior
+    if tokens.refresh_token.is_none() {
+        tokens.refresh_token = Some(refresh_token.to_string());
+    }
+    Ok(tokens)
 }
