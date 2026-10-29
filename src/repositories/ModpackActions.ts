@@ -1,34 +1,81 @@
 import { invoke } from '@tauri-apps/api/core';
-import { loadSettings } from '../components/ModpackSettingsModal';
 import { recordPlayed } from './PlayHistory';
 import type { Account } from '../types/account';
 import { ModpackVersion, resolveLoader } from '../types/modpack';
-import type { ModpackSettings, RecommendedSettings } from '../types/modpackSettings';
+import { DEFAULT_SETTINGS, ModpackSettings, RecommendedSettings } from '../types/modpackSettings';
 
 const settingsKey = (modpackId: string) => `kb_settings_${modpackId}`;
+/** Firma de los flags que antes se guardaban automáticamente en extraJvmArgs */
+const LEGACY_AUTO_FLAG = '-XX:AllocatePrefetchStyle=1';
+
+let recommendedPromise: Promise<RecommendedSettings | null> | null = null;
+
+/** Recomendación para el equipo (no cambia mientras la app está abierta) */
+export function getRecommendedSettings(): Promise<RecommendedSettings | null> {
+    recommendedPromise ??= invoke<RecommendedSettings>('get_recommended_settings').catch((err) => {
+        console.warn('[ModpackActions] No se pudieron obtener settings recomendados:', err);
+        recommendedPromise = null;
+        return null;
+    });
+    return recommendedPromise;
+}
+
+export function saveModpackSettings(modpackId: string, settings: ModpackSettings) {
+    localStorage.setItem(settingsKey(modpackId), JSON.stringify(settings));
+}
+
+function readSaved(modpackId: string): Partial<ModpackSettings> | null {
+    try {
+        const raw = localStorage.getItem(settingsKey(modpackId));
+        return raw ? JSON.parse(raw) : null;
+    } catch {
+        return null;
+    }
+}
 
 /**
- * Si el usuario no ha guardado ajustes para este modpack, guarda los
- * recomendados para su equipo. Devuelve los ajustes efectivos.
+ * Ajustes efectivos del modpack. Si no hay guardados, crea los recomendados.
+ * Migra los guardados por versiones anteriores: antes se asignaba la mitad de
+ * la RAM y los flags automáticos se mezclaban con los del usuario.
  */
 export async function ensureModpackSettings(modpackId: string): Promise<ModpackSettings> {
-    if (localStorage.getItem(settingsKey(modpackId))) return loadSettings(modpackId);
-    try {
-        const recommended = await invoke<RecommendedSettings>('get_recommended_settings');
-        const settings: ModpackSettings = {
-            minRamMb: recommended.min_ram_mb,
-            maxRamMb: recommended.max_ram_mb,
-            fullscreen: recommended.fullscreen,
-            windowWidth: recommended.window_width,
-            windowHeight: recommended.window_height,
-            extraJvmArgs: recommended.extra_jvm_args,
-        };
-        localStorage.setItem(settingsKey(modpackId), JSON.stringify(settings));
+    const rec = await getRecommendedSettings();
+    const saved = readSaved(modpackId);
+
+    if (!saved) {
+        const settings: ModpackSettings = rec
+            ? {
+                ...DEFAULT_SETTINGS,
+                minRamMb: rec.min_ram_mb,
+                maxRamMb: rec.max_ram_mb,
+                windowWidth: rec.window_width,
+                windowHeight: rec.window_height,
+                fullscreen: rec.fullscreen,
+            }
+            : { ...DEFAULT_SETTINGS };
+        saveModpackSettings(modpackId, settings);
         return settings;
-    } catch (err) {
-        console.warn('[ModpackActions] No se pudieron obtener settings recomendados:', err);
-        return loadSettings(modpackId);
     }
+
+    const settings: ModpackSettings = { ...DEFAULT_SETTINGS, ...saved };
+
+    if (saved.ramSource === undefined) {
+        // La fórmula antigua era el 50% de la RAM, entre 2GB y 16GB
+        const oldAuto = rec ? Math.min(16384, Math.max(2048, Math.floor(rec.total_ram_mb / 2))) : null;
+        settings.ramSource = oldAuto !== null && saved.maxRamMb === oldAuto ? 'auto' : 'user';
+        if (settings.extraJvmArgs.includes(LEGACY_AUTO_FLAG)) {
+            settings.extraJvmArgs = '';
+            settings.autoJvmArgs = true;
+        }
+    }
+
+    if (settings.ramSource === 'auto' && rec) {
+        settings.maxRamMb = rec.max_ram_mb;
+        settings.minRamMb = rec.min_ram_mb;
+    }
+
+    saveModpackSettings(modpackId, settings);
+    return settings;
 }
 
 /** Lanza el modpack con la cuenta indicada (ya con la sesión refrescada) */
@@ -36,24 +83,32 @@ export async function launchModpack(
     modpack: ModpackVersion,
     basePath: string,
     account: Account,
-    settings: ModpackSettings = loadSettings(modpack.modpackId),
+    modpackName: string,
 ): Promise<void> {
+    const settings = await ensureModpackSettings(modpack.modpackId);
+    const rec = settings.autoJvmArgs ? await getRecommendedSettings() : null;
+    const jvmArgs = [rec?.extra_jvm_args, settings.extraJvmArgs]
+        .filter(Boolean)
+        .join(' ');
+
     const { loader, loaderVersion } = resolveLoader(modpack);
     await invoke('launch_modpack', {
         basePath,
         modpackId: modpack.modpackId,
+        modpackName,
+        showLogs: settings.showLogs,
         mcVersion: modpack.minecraftVersion,
         loader,
         loaderVersion,
         username: account.username ?? 'Player',
         uuid: account.isOnline ? account.uuid : null,
         accessToken: account.isOnline ? account.accessToken : null,
-        minRamMb: settings.minRamMb,
+        minRamMb: Math.min(settings.minRamMb, settings.maxRamMb),
         maxRamMb: settings.maxRamMb,
         fullscreen: settings.fullscreen,
         windowWidth: settings.windowWidth,
         windowHeight: settings.windowHeight,
-        extraJvmArgs: settings.extraJvmArgs,
+        extraJvmArgs: jvmArgs,
     });
     recordPlayed(modpack.modpackId);
 }

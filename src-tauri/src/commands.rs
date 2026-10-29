@@ -217,6 +217,8 @@ pub async fn launch_modpack(
     app: AppHandle,
     base_path: String,
     modpack_id: String,
+    modpack_name: Option<String>,
+    show_logs: Option<bool>,
     mc_version: String,
     loader: Option<String>,
     loader_version: String,
@@ -254,9 +256,10 @@ pub async fn launch_modpack(
     };
 
     launch(
-        app,
+        app.clone(),
         base_path,
-        modpack_id,
+        modpack_id.clone(),
+        modpack_name.unwrap_or_else(|| modpack_id.clone()),
         mc_version,
         loader.unwrap_or_else(|| "forge".to_string()),
         loader_version,
@@ -264,7 +267,15 @@ pub async fn launch_modpack(
         settings,
     )
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    if show_logs.unwrap_or(true) {
+        // No poder abrir la ventana de logs no debe impedir jugar
+        if let Err(e) = crate::game_logs::open_log_window(&app, &modpack_id) {
+            warn!("[commands::launch_modpack] {}", e);
+        }
+    }
+    Ok(())
 }
 
 /// Evita rutas fuera de `instances/` (p.ej. "../..") a partir de un id

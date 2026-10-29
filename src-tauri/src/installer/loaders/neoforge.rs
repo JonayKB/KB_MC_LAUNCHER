@@ -3,6 +3,7 @@ use std::path::Path;
 use tauri::AppHandle;
 use crate::installer::progress::{emit, ProgressPayload};
 use crate::installer::download;
+use crate::process_ext::NoConsoleWindow;
 
 pub async fn install(
     app: &AppHandle,
@@ -30,6 +31,8 @@ pub async fn install(
             "--installClient",
             versions_dir.parent().unwrap().to_str().unwrap(),
         ])
+        .kill_on_drop(true)
+        .no_console_window()
         .status()
         .await
         .context("No se pudo ejecutar Java. ¿Está instalado?")?;
