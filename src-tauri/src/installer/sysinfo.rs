@@ -190,13 +190,13 @@ pub fn recommend_settings(info: &SystemInfo) -> RecommendedSettings {
     // El recolector de basura no se fija aquí: depende de la versión de Java
     // del modpack y de la RAM elegida, así que lo decide el launcher al lanzar
     // (ver `gc_args`).
-    let mut args: Vec<String> = Vec::new();
-
     // ── Optimizaciones generales ──────────────────────────────
-    args.push("-XX:+DisableExplicitGC".to_string());
-    args.push("-XX:AllocatePrefetchStyle=1".to_string());
-    args.push("-Dfml.readTimeout=120".to_string());
-    args.push("-Dfml.loginTimeout=120".to_string());
+    let mut args: Vec<String> = vec![
+        "-XX:+DisableExplicitGC".to_string(),
+        "-XX:AllocatePrefetchStyle=1".to_string(),
+        "-Dfml.readTimeout=120".to_string(),
+        "-Dfml.loginTimeout=120".to_string(),
+    ];
 
     let nio_size = if max_ram_mb >= 8192 { 512 } else { 256 };
     args.push(format!("-XX:MaxDirectMemorySize={}M", nio_size));
