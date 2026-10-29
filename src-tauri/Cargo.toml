@@ -1,6 +1,6 @@
 [package]
 name = "kb-mc-launcher"
-version = "1.0.6"
+version = "1.0.5"
 description = "KB Minecraft Launcher"
 authors = ["JonayKB"]
 edition = "2021"
