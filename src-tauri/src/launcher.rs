@@ -1,8 +1,10 @@
 use crate::installer::loaders::fabric;
 use crate::installer::requirements::get_java_binary_async;
+use crate::RunningInstances;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-
+use tauri::{AppHandle, Emitter, Manager};
+use tracing::{debug, error, info, warn};
 pub struct LaunchSettings {
     pub min_ram_mb: u32,
     pub max_ram_mb: u32,
@@ -63,7 +65,32 @@ impl Default for LaunchSettings {
         }
     }
 }
+#[cfg(target_os = "windows")]
+fn set_gpu_preference_high_performance(exe_path: &str) {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    match hkcu.create_subkey("Software\\Microsoft\\DirectX\\UserGpuPreferences") {
+        Ok((key, _)) => {
+            if let Err(e) = key.set_value(exe_path, &"GpuPreference=2;") {
+                warn!("[launcher] No se pudo fijar preferencia de GPU: {}", e);
+            } else {
+                info!(
+                    "[launcher] GPU de alto rendimiento fijada para: {}",
+                    exe_path
+                );
+            }
+        }
+        Err(e) => warn!("[launcher] No se pudo abrir UserGpuPreferences: {}", e),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_gpu_preference_high_performance(_exe_path: &str) {}
+
 pub async fn launch(
+    app: AppHandle,
     base_path: String,
     modpack_id: String,
     mc_version: String,
@@ -71,7 +98,7 @@ pub async fn launch(
     loader_version: String,
     auth: LaunchAuth,
     settings: LaunchSettings,
-) -> Result<tokio::process::Child> {
+) -> Result<()> {
     let username = auth.username.clone();
     let base = Path::new(&base_path);
     let instance_dir = base.join("instances").join(&modpack_id);
@@ -79,8 +106,8 @@ pub async fn launch(
     let libs_dir = base.join("libraries");
 
     let java_bin = get_java_binary_async(base, &mc_version).await;
-    log::info!("[launcher::launch] Usando Java: {}", java_bin);
-    log::info!(
+    info!("[launcher::launch] Usando Java: {}", java_bin);
+    info!(
         "[launcher::launch] RAM: {}MB - {}MB | Fullscreen: {} | {}x{}",
         settings.min_ram_mb,
         settings.max_ram_mb,
@@ -88,6 +115,7 @@ pub async fn launch(
         settings.window_width,
         settings.window_height
     );
+    set_gpu_preference_high_performance(&java_bin);
 
     let version_id = match loader.as_str() {
         "forge" => format!("{}-forge-{}", mc_version, loader_version),
@@ -203,13 +231,12 @@ pub async fn launch(
                 continue;
             }
             if is_gc_arg(arg) {
-                log::warn!(
+                warn!(
                     "[launcher] Filtrando GC arg de extraJvmArgs del usuario: {}",
                     arg
                 );
                 continue;
             }
-            log::trace!("[launcher] extra JVM arg: {}", arg);
             jvm_args.push(arg.to_string());
         }
     }
@@ -235,7 +262,7 @@ pub async fn launch(
                 // Filtrar args de GC del JSON del loader
                 // para que no conflicten con los nuestros
                 if is_gc_arg(s) {
-                    log::debug!("[launcher] Filtrando GC arg del JSON del loader: {}", s);
+                    debug!("[launcher] Filtrando GC arg del JSON del loader: {}", s);
                     continue;
                 }
                 let resolved = resolve_arg(
@@ -329,16 +356,15 @@ pub async fn launch(
     // Pantalla desde settings
     if settings.fullscreen {
         game_args.push("--fullscreen".to_string());
-        log::info!("[launcher::launch] Modo pantalla completa activado");
+        info!("[launcher::launch] Modo pantalla completa activado");
     } else {
         game_args.push("--width".to_string());
         game_args.push(settings.window_width.to_string());
         game_args.push("--height".to_string());
         game_args.push(settings.window_height.to_string());
-        log::info!(
+        info!(
             "[launcher::launch] Resolución: {}x{}",
-            settings.window_width,
-            settings.window_height
+            settings.window_width, settings.window_height
         );
     }
 
@@ -364,8 +390,8 @@ pub async fn launch(
     cmd_args.push(main_class);
     cmd_args.extend(game_args);
 
-    log::info!("[launcher::launch] Lanzando con {} args", cmd_args.len());
-    log::info!("[launcher] CMD ARGS COMPLETOS:");
+    info!("[launcher::launch] Lanzando con {} args", cmd_args.len());
+    info!("[launcher] CMD ARGS COMPLETOS:");
     for (i, arg) in cmd_args.iter().enumerate() {
         // Nunca escribir el token de sesión en los logs
         let shown = if *arg == auth.access_token && auth.user_type == "msa" {
@@ -373,19 +399,68 @@ pub async fn launch(
         } else {
             arg.as_str()
         };
-        log::info!("[launcher]   [{}] {}", i, shown);
+        info!("[launcher]   [{}] {}", i, shown);
     }
     match tokio::process::Command::new(&java_bin)
         .args(&cmd_args)
         .current_dir(&instance_dir)
+        .env("SHIM_MCCOMPAT", "0x800000001")
         .spawn()
     {
-        Ok(child) => {
-            log::info!("[launcher::launch] ✓ PID {:?}", child.id());
-            Ok(child)
+        Ok(mut child) => {
+            let pid = child.id().unwrap_or(0);
+            info!("[launcher::launch] ✓ PID {:?}", pid);
+
+            if let Some(state) = app.try_state::<RunningInstances>() {
+                state
+                    .processes
+                    .lock()
+                    .unwrap()
+                    .insert(modpack_id.clone(), pid);
+            } else {
+                warn!("[launcher] RunningInstances no estaba registrado en el estado de Tauri");
+            }
+
+            app.emit(
+                "game_started",
+                serde_json::json!({
+                    "modpackId": modpack_id,
+                }),
+            )
+            .ok();
+
+            let app_clone = app.clone();
+            let modpack_id_clone = modpack_id.clone();
+            tokio::spawn(async move {
+                let status = child.wait().await;
+                let exit_code = status.ok().and_then(|s| s.code());
+                info!(
+                    "[launcher::launch] Proceso del modpack '{}' finalizado (code={:?})",
+                    modpack_id_clone, exit_code
+                );
+
+                // Desregistrar
+                if let Some(state) = app_clone.try_state::<RunningInstances>() {
+                    state.processes.lock().unwrap().remove(&modpack_id_clone);
+                } else {
+                    warn!("[launcher] RunningInstances no estaba registrado en el estado de Tauri");
+                }
+
+                app_clone
+                    .emit(
+                        "game_exited",
+                        serde_json::json!({
+                            "modpackId": modpack_id_clone,
+                            "exitCode": exit_code,
+                        }),
+                    )
+                    .ok();
+            });
+
+            Ok(())
         }
         Err(e) => {
-            log::error!("[launcher::launch] Error lanzando '{}': {}", java_bin, e);
+            error!("[launcher::launch] Error lanzando '{}': {}", java_bin, e);
             #[cfg(target_os = "windows")]
             return Err(e).context(format!(
                 "No se pudo lanzar Java ('{}').\nComprueba que Java 17+ está instalado.\nPuedes descargarlo desde https://adoptium.net",

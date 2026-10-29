@@ -113,16 +113,27 @@ export function InstallProvider({ children }: Readonly<{ children: React.ReactNo
         });
 
         try {
-            await invoke('install_modpack', {
-                basePath,
-                mcVersion: modpack.minecraftVersion,
-                loader,
-                loaderVersion,
-                overridesUrl: modpack.overridesUrl,
-                modsUrl: modpack.modsUrl,
-                modpackId: modpack.modpackId,
-                version: modpack.version,
-            });
+            if (isUpdate) {
+                // Solo reemplaza mods y overrides; el loader ya está instalado
+                await invoke('update_modpack', {
+                    basePath,
+                    overridesUrl: modpack.overridesUrl,
+                    modsUrl: modpack.modsUrl,
+                    modpackId: modpack.modpackId,
+                    modpackVersion: modpack.version,
+                });
+            } else {
+                await invoke('install_modpack', {
+                    basePath,
+                    mcVersion: modpack.minecraftVersion,
+                    loader,
+                    loaderVersion,
+                    overridesUrl: modpack.overridesUrl,
+                    modsUrl: modpack.modsUrl,
+                    modpackId: modpack.modpackId,
+                    modpackVersion: modpack.version,
+                });
+            }
             setJob(prev => prev && { ...prev, status: 'done', progress: { ...prev.progress, percent: 100 } });
             dismissTimer.current = setTimeout(() => setJob(null), DONE_DISMISS_MS);
             return true;

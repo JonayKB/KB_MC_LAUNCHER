@@ -2,20 +2,20 @@ use crate::auth::xbox::XboxTokens;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MinecraftProfile {
     pub uuid: String,
     pub username: String,
     pub access_token: String,
-    /// Segundos de validez del token de Minecraft
-    pub expires_in: u64,
     pub skin_url: Option<String>,
+    pub expires_in: u64,
 }
 
 pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result<MinecraftProfile> {
     // ── 1. Token de Minecraft ─────────────────────────────────
-    log::info!("[minecraft] Obteniendo token de Minecraft...");
+    info!("[minecraft] Obteniendo token de Minecraft...");
 
     let mc_resp = client
         .post("https://api.minecraftservices.com/authentication/login_with_xbox")
@@ -37,8 +37,6 @@ pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result
         .await
         .context("Error leyendo respuesta Minecraft")?;
 
-    log::info!("[minecraft] status={}", status);
-
     if !status.is_success() {
         anyhow::bail!("Minecraft Services devolvió {}", status);
     }
@@ -49,12 +47,11 @@ pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result
         .as_str()
         .context("access_token de Minecraft no encontrado")?
         .to_string();
-    let expires_in = mc_resp["expires_in"].as_u64().unwrap_or(86400);
 
-    log::info!("[minecraft] ✓ Token de Minecraft obtenido");
+    info!("[minecraft] ✓ Token de Minecraft obtenido");
 
     // ── 2. Verificar que tiene el juego ───────────────────────
-    log::info!("[minecraft] Verificando propiedad del juego...");
+    info!("[minecraft] Verificando propiedad del juego...");
 
     let entitlements: serde_json::Value = client
         .get("https://api.minecraftservices.com/entitlements/mcstore")
@@ -77,14 +74,14 @@ pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result
         .unwrap_or(false);
 
     if !has_game {
-        log::warn!("[minecraft] La cuenta no tiene Minecraft comprado");
+        warn!("[minecraft] La cuenta no tiene Minecraft comprado");
         anyhow::bail!("Esta cuenta de Microsoft no tiene Minecraft Java Edition comprado.");
     }
 
-    log::info!("[minecraft] ✓ Propiedad del juego verificada");
+    info!("[minecraft] ✓ Propiedad del juego verificada");
 
     // ── 3. Obtener perfil ─────────────────────────────────────
-    log::info!("[minecraft] Obteniendo perfil...");
+    info!("[minecraft] Obteniendo perfil...");
 
     let profile: serde_json::Value = client
         .get("https://api.minecraftservices.com/minecraft/profile")
@@ -111,18 +108,32 @@ pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result
         .and_then(|skins| skins.iter().find(|s| s["state"].as_str() == Some("ACTIVE")))
         .and_then(|skin| skin["url"].as_str())
         .map(|s| s.to_string());
-
-    log::info!(
+    // La API responde `expires_in`; se acepta también `expiresIn` por si acaso
+    let expires_in = match mc_resp["expires_in"].as_u64().or_else(|| mc_resp["expiresIn"].as_u64()) {
+        Some(v) => {
+            info!(
+                "[minecraft] expiresIn del token: {} segundos ({} horas)",
+                v,
+                v / 3600
+            );
+            v
+        }
+        None => {
+            warn!("[minecraft] expiresIn no encontrado en la respuesta, usando fallback de 86400s (24h)");
+            debug!("[minecraft] mc_resp completo: {}", mc_resp);
+            86400
+        }
+    };
+    info!(
         "[minecraft] ✓ Perfil obtenido — username: {} | uuid: {}",
-        username,
-        uuid
+        username, uuid
     );
 
     Ok(MinecraftProfile {
         uuid,
         username,
         access_token,
-        expires_in,
         skin_url,
+        expires_in,
     })
 }

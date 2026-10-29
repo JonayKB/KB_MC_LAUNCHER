@@ -13,7 +13,8 @@ const toneColor: Record<ToastTone, string> = {
 export const toast = {
   wrap: (tone: ToastTone): S => ({
     position: 'fixed',
-    top: 'calc(16px + env(safe-area-inset-top, 0px))',
+    // Debajo del AccountWidget, que ocupa la esquina superior derecha
+    top: 'calc(76px + env(safe-area-inset-top, 0px))',
     right: '16px',
     width: '340px',
     maxWidth: 'calc(100vw - 32px)',

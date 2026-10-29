@@ -6,6 +6,7 @@ use crate::installer::requirements::{
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
+use tracing::{error, info};
 
 const VERSION_MANIFEST: &str =
     "https://launchermeta.mojang.com/mc/game/version_manifest.json";
@@ -73,35 +74,170 @@ pub async fn prepare(app: &AppHandle, versions_dir: &Path, mc_version: &str) -> 
         ).await?;
     }
 
-    download_libraries(&mc_json, launcher_root, app, "Libraries Minecraft").await;
-    download_assets(&mc_json, launcher_root, app).await;
+    download_libraries(&mc_json, launcher_root, app, "Libraries Minecraft").await?;
+    download_assets(&mc_json, launcher_root, app).await?;
 
     Ok(mc_json)
 }
 
 // ── Helpers compartidos con los loaders ───────────────────────
 
-/// Descarga las libraries que traen `downloads.artifact` (formato Mojang/Forge)
 pub async fn download_libraries(
     json: &serde_json::Value,
     launcher_root: &Path,
     app: &AppHandle,
     label: &str,
-) {
+) -> Result<()> {
     let libs_dir = launcher_root.join("libraries");
 
-    let items: Vec<(String, PathBuf)> = json["libraries"]
+    let items: Vec<(String, std::path::PathBuf)> = json["libraries"]
         .as_array()
-        .map(|arr| arr.iter().filter_map(|lib| {
-            let url  = lib["downloads"]["artifact"]["url"].as_str()?;
-            let path = lib["downloads"]["artifact"]["path"].as_str()?;
-            if url.is_empty() { return None; }
-            Some((url.to_string(), libs_dir.join(path)))
-        }).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|lib| {
+                    let url = lib["downloads"]["artifact"]["url"].as_str()?;
+                    let path = lib["downloads"]["artifact"]["path"].as_str()?;
+                    if url.is_empty() {
+                        return None;
+                    }
+                    Some((url.to_string(), libs_dir.join(path)))
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
-    log::info!("[download_libraries] {} — {} items en paralelo", label, items.len());
-    download::download_many(items, 16, Some(app), label).await;
+    info!(
+        "[download_libraries] {} — {} items en paralelo",
+        label,
+        items.len()
+    );
+
+    let failures = download::download_many(items, 16, Some(app), label).await;
+
+    if !failures.is_empty() {
+        for f in &failures {
+            error!(
+                "[download_libraries] {} — fallo definitivo: {} ({})",
+                label,
+                f.dest.display(),
+                f.error
+            );
+        }
+        anyhow::bail!(
+            "{}: {} archivo(s) no se pudieron descargar tras varios intentos. Revisa tu conexión e inténtalo de nuevo.",
+            label,
+            failures.len()
+        );
+    }
+
+    info!("[download_libraries] {} completado", label);
+    Ok(())
+}
+
+pub async fn download_assets(
+    mc_json: &serde_json::Value,
+    launcher_root: &Path,
+    app: &AppHandle,
+) -> Result<()> {
+    let asset_index_url = mc_json["assetIndex"]["url"]
+        .as_str()
+        .context("assetIndex.url no encontrado en el JSON de Minecraft")?;
+    let asset_id = mc_json["assetIndex"]["id"]
+        .as_str()
+        .context("assetIndex.id no encontrado en el JSON de Minecraft")?;
+
+    let indexes_dir = launcher_root.join("assets").join("indexes");
+    tokio::fs::create_dir_all(&indexes_dir).await.ok();
+    let index_path = indexes_dir.join(format!("{}.json", asset_id));
+
+    // Verificar no solo existencia, también que no esté vacío/corrupto de un intento anterior
+    let index_valid = match tokio::fs::metadata(&index_path).await {
+        Ok(meta) => meta.len() > 0,
+        Err(_) => false,
+    };
+
+    if !index_valid {
+        emit(
+            app,
+            ProgressPayload::Step {
+                step: "Descargando índice de assets...".into(),
+                percent: 0,
+            },
+        );
+        // ANTES: .ok() se tragaba el error y dejaba el índice ausente/corrupto en silencio.
+        // AHORA: se propaga con `?`, así que si falla, la instalación entera falla con
+        // un mensaje claro en vez de arrancar el juego sin sonidos/texturas.
+        download::download_to(asset_index_url, &index_path, None, "")
+            .await
+            .context("No se pudo descargar el índice de assets")?;
+    }
+
+    let index_str = tokio::fs::read_to_string(&index_path)
+        .await
+        .context("No se pudo leer el índice de assets recién descargado")?;
+    let index_json: serde_json::Value = serde_json::from_str(&index_str)
+        .context("El índice de assets descargado no es un JSON válido")?;
+    let objects = index_json["objects"]
+        .as_object()
+        .context("El índice de assets no contiene 'objects'")?;
+
+    let objects_dir = launcher_root.join("assets").join("objects");
+
+    let items: Vec<(String, std::path::PathBuf)> = objects
+        .values()
+        .filter_map(|obj| obj["hash"].as_str())
+        .map(|hash| {
+            let prefix = &hash[..2];
+            let dest = objects_dir.join(prefix).join(hash);
+            let url = format!(
+                "https://resources.download.minecraft.net/{}/{}",
+                prefix, hash
+            );
+            (url, dest)
+        })
+        .collect();
+
+    let total = items.len();
+    let already = items.iter().filter(|(_, d)| d.exists()).count();
+    let pending = total - already;
+
+    info!(
+        "[download_assets] {} assets totales — {} ya descargados — {} pendientes",
+        total, already, pending
+    );
+
+    if pending == 0 {
+        emit(
+            app,
+            ProgressPayload::Step {
+                step: "Assets ya descargados".into(),
+                percent: 100,
+            },
+        );
+        return Ok(());
+    }
+
+    // Concurrencia moderada: 32 en paralelo estaba gatillando rate-limit de Mojang
+    // en ráfagas, causando decenas de fallos simultáneos. 20 es más conservador.
+    let failures = download::download_many(items, 20, Some(app), "Assets").await;
+
+    if !failures.is_empty() {
+        for f in &failures {
+            error!(
+                "[download_assets] Fallo definitivo: {} ({})",
+                f.dest.display(),
+                f.error
+            );
+        }
+        anyhow::bail!(
+            "No se pudieron descargar {} de {} assets tras varios intentos. Revisa tu conexión e inténtalo de nuevo.",
+            failures.len(),
+            total
+        );
+    }
+
+    info!("[download_assets] ✓ Assets completados");
+    Ok(())
 }
 
 /// Descarga libraries en formato Maven (`name` + `url` base), como las de Fabric
@@ -110,7 +246,7 @@ pub async fn download_maven_libraries(
     launcher_root: &Path,
     app: &AppHandle,
     label: &str,
-) {
+) -> Result<()> {
     let libs_dir = launcher_root.join("libraries");
 
     let items: Vec<(String, PathBuf)> = json["libraries"]
@@ -124,8 +260,19 @@ pub async fn download_maven_libraries(
         }).collect())
         .unwrap_or_default();
 
-    log::info!("[download_maven_libraries] {} — {} items en paralelo", label, items.len());
-    download::download_many(items, 16, Some(app), label).await;
+    info!("[download_maven_libraries] {} — {} items en paralelo", label, items.len());
+    let failures = download::download_many(items, 16, Some(app), label).await;
+    if !failures.is_empty() {
+        for f in &failures {
+            error!("[download_maven_libraries] {} — fallo definitivo: {} ({})", label, f.dest.display(), f.error);
+        }
+        anyhow::bail!(
+            "{}: {} archivo(s) no se pudieron descargar tras varios intentos. Revisa tu conexión e inténtalo de nuevo.",
+            label,
+            failures.len()
+        );
+    }
+    Ok(())
 }
 
 /// `grupo:artefacto:versión[:clasificador]` → `grupo/artefacto/versión/artefacto-versión[-clasificador].jar`
@@ -137,59 +284,6 @@ pub fn maven_relative_path(name: &str) -> Option<String> {
     let (group, artifact, version) = (parts[0].replace('.', "/"), parts[1], parts[2]);
     let classifier = parts.get(3).map(|c| format!("-{}", c)).unwrap_or_default();
     Some(format!("{group}/{artifact}/{version}/{artifact}-{version}{classifier}.jar"))
-}
-
-pub async fn download_assets(mc_json: &serde_json::Value, launcher_root: &Path, app: &AppHandle) {
-    let asset_index_url = mc_json["assetIndex"]["url"].as_str();
-    let asset_id        = mc_json["assetIndex"]["id"].as_str();
-    let (Some(index_url), Some(id)) = (asset_index_url, asset_id) else { return };
-
-    let indexes_dir = launcher_root.join("assets").join("indexes");
-    tokio::fs::create_dir_all(&indexes_dir).await.ok();
-    let index_path = indexes_dir.join(format!("{}.json", id));
-
-    if !index_path.exists() {
-        emit(app, ProgressPayload::Step {
-            step: "Descargando índice de assets...".into(), percent: 0,
-        });
-        download::download_to(index_url, &index_path, None, "").await.ok();
-    }
-
-    let Ok(index_str)  = tokio::fs::read_to_string(&index_path).await else { return };
-    let Ok(index_json) = serde_json::from_str::<serde_json::Value>(&index_str) else { return };
-    let Some(objects)  = index_json["objects"].as_object() else { return };
-
-    let objects_dir = launcher_root.join("assets").join("objects");
-
-    let items: Vec<(String, PathBuf)> = objects.values()
-        .filter_map(|obj| obj["hash"].as_str())
-        .map(|hash| {
-            let prefix = &hash[..2];
-            let dest   = objects_dir.join(prefix).join(hash);
-            let url    = format!(
-                "https://resources.download.minecraft.net/{}/{}",
-                prefix, hash
-            );
-            (url, dest)
-        })
-        .collect();
-
-    let total = items.len();
-    let already = items.iter().filter(|(_, d)| d.exists()).count();
-    let pending = total - already;
-
-    log::info!("[download_assets] {} assets totales — {} ya descargados — {} pendientes", total, already, pending);
-
-    if pending == 0 {
-        emit(app, ProgressPayload::Step {
-            step: "Assets ya descargados".into(), percent: 100,
-        });
-        return;
-    }
-
-    // Más concurrencia para assets (son archivos pequeños)
-    download::download_many(items, 32, Some(app), "Assets").await;
-    log::info!("[download_assets] ✓ Assets completados");
 }
 
 #[cfg(test)]

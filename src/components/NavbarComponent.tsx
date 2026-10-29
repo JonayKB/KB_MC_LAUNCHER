@@ -4,8 +4,6 @@ import { fetchModpackIndex } from "../repositories/ModpackRepository";
 import { navbar, item, settings } from "../styles/navbarStyles";
 import { useLocation, useNavigate } from "react-router-dom";
 import AppSettingsModal from './AppSettingsModal';
-import AccountsModal, { AccountAvatar } from './AccountsModal';
-import { useUser } from '../context/UserContext';
 function NavbarSkeleton({ expanded }: { expanded: boolean }) {
     return (
         <>
@@ -57,9 +55,6 @@ export default function NavbarComponent() {
     const navigate = useNavigate();
     const location = useLocation();
     const [settingsOpen, setSettingsOpen] = useState(false);
-    const [accountsOpen, setAccountsOpen] = useState(false);
-    const [accountHovered, setAccountHovered] = useState(false);
-    const { activeAccount } = useUser();
     useEffect(() => {
         const fetchData = async () => {
             setLoading(true);
@@ -145,22 +140,7 @@ export default function NavbarComponent() {
             </div>
 
             <div
-                style={{ ...settings.wrap(accountHovered), color: 'var(--text-primary)' }}
-                onMouseEnter={() => setAccountHovered(true)}
-                onMouseLeave={() => setAccountHovered(false)}
-                onClick={() => setAccountsOpen(true)}
-                title={activeAccount?.username ?? 'Cuentas'}
-            >
-                <span style={settings.icon}>
-                    <AccountAvatar account={activeAccount} size={32} />
-                </span>
-                <span style={{ ...settings.label(expanded), textTransform: 'none', fontSize: '14px' }}>
-                    {activeAccount?.username ?? 'Sin cuenta'}
-                </span>
-            </div>
-
-            <div
-                style={{ ...settings.wrap(settingsHovered), borderTop: 'none', marginTop: 0, paddingTop: '10px' }}
+                style={settings.wrap(settingsHovered)}
                 onMouseEnter={() => setSettingsHovered(true)}
                 onMouseLeave={() => setSettingsHovered(false)}
                 onClick={() => setSettingsOpen(true)}
@@ -175,9 +155,6 @@ export default function NavbarComponent() {
             </div>
             {settingsOpen && (
                 <AppSettingsModal onClose={() => setSettingsOpen(false)} />
-            )}
-            {accountsOpen && (
-                <AccountsModal onClose={() => setAccountsOpen(false)} />
             )}
         </nav>
     );

@@ -5,13 +5,23 @@ mod commands;
 mod installer;
 mod launcher;
 mod auth;
+mod logging;
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use crate::logging::init_logging;
+#[derive(Default)]
+pub struct RunningInstances {
+    pub processes: Mutex<HashMap<String, u32>>, // modpack_id -> pid
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
-        .manage(commands::RunningGames::default())
         .manage(commands::InstallState::default())
         .setup(|app| {
+            init_logging(app.handle());
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
@@ -59,10 +69,10 @@ pub fn run() {
 
             Ok(())
         })
-        .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        
         .invoke_handler(tauri::generate_handler![
             commands::install_modpack,
             commands::fetch_text,
@@ -75,11 +85,13 @@ pub fn run() {
             commands::clear_all_cache,
             commands::restart_app,
             commands::auth_microsoft,
-            commands::refresh_microsoft,
-            commands::is_game_running,
+            commands::auth_refresh,
+            commands::update_modpack,
+            commands::is_modpack_running,
             commands::get_installed_version,
-            commands::cancel_install
+            commands::cancel_install,
         ])
+        .manage(RunningInstances::default())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -130,7 +130,6 @@ export default function ModpackDetailScreen() {
             refreshInstallState();
         }
     }
-
     async function handleOpenFiles(modpack: ModpackVersion) {
         if (!basePath) return;
         const instanceDir = `${basePath}/instances/${modpack.modpackId}`;
