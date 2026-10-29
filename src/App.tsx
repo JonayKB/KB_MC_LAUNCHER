@@ -4,10 +4,13 @@ import ModpackDetailScreen from './screens/ModpackDetailScreen';
 import NavbarComponent from './components/NavbarComponent';
 import AccountWidget from './components/AccountWidget';
 import InstallToast from './components/InstallToast';
+import CrashToast from './components/CrashToast';
 import { InstallProvider } from './context/InstallContext';
 import { COLLAPSED_WIDTH } from './styles/navbarStyles';
+import { usePlaySessionRecorder } from './hooks/usePlaytime';
 
 export default function App() {
+    usePlaySessionRecorder();
     return (
         <BrowserRouter>
             <InstallProvider>
@@ -29,6 +32,7 @@ export default function App() {
                     </main>
                 </div>
                 <InstallToast />
+                <CrashToast />
             </InstallProvider>
         </BrowserRouter>
     );

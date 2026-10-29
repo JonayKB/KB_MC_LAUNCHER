@@ -73,6 +73,47 @@ export const detail = {
         padding: '4px 10px',
     } as S,
 
+    playtimeBox: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+        alignItems: 'flex-start',
+    } as S,
+
+    playtimeSummary: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        fontSize: '13px',
+        color: 'rgba(255,255,255,0.8)',
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        cursor: 'pointer',
+    } as S,
+
+    sessionList: {
+        listStyle: 'none',
+        margin: 0,
+        padding: '8px 12px',
+        minWidth: '280px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+        background: 'rgba(8,8,9,0.6)',
+        border: '1px solid rgba(255,255,255,0.12)',
+        borderRadius: 'var(--radius-md)',
+        backdropFilter: 'blur(6px)',
+    } as S,
+
+    sessionRow: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        gap: '16px',
+        fontSize: '12px',
+        color: 'rgba(255,255,255,0.8)',
+    } as S,
+
     actionsCol: {
         display: 'flex',
         alignItems: 'center',

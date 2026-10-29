@@ -450,6 +450,7 @@ pub async fn launch(
 
             let app_clone = app.clone();
             let modpack_id_clone = modpack_id.clone();
+            let started_at = std::time::Instant::now();
             tokio::spawn(async move {
                 let status = tokio::select! {
                     status = child.wait() => status,
@@ -461,6 +462,8 @@ pub async fn launch(
                     }
                 };
                 let exit_code = status.ok().and_then(|s| s.code());
+                // Para el historial de horas jugadas (lo guarda el frontend)
+                let duration_secs = started_at.elapsed().as_secs();
 
                 // Esperar a leer las últimas líneas antes de marcar la sesión como cerrada
                 let _ = tokio::time::timeout(std::time::Duration::from_secs(3), log_reader).await;
@@ -483,6 +486,7 @@ pub async fn launch(
                         serde_json::json!({
                             "modpackId": modpack_id_clone,
                             "exitCode": exit_code,
+                            "durationSecs": duration_secs,
                         }),
                     )
                     .ok();
