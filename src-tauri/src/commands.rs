@@ -1,12 +1,15 @@
 use crate::auth::{microsoft, minecraft, skin, xbox};
 use crate::installer::sysinfo::{get_system_info, recommend_settings, RecommendedSettings};
-use crate::launcher::{launch, LaunchSettings};
+use crate::launcher::{launch, LaunchAuth, LaunchSettings};
 use crate::{installer, RunningInstances};
+use std::future::Future;
 use std::path::Path;
-use tauri::AppHandle;
-use tauri::Manager;
-use tauri::Window;
+use std::sync::Mutex;
+use tauri::{AppHandle, Manager, State, Window};
 use tracing::{error, info, warn};
+
+/// Únicos orígenes que el frontend puede descargar mediante `fetch_text`
+const ALLOWED_FETCH_PREFIXES: &[&str] = &["https://me.jonaykb.com/"];
 
 #[derive(serde::Serialize)]
 pub struct LoginCompleteResponse {
@@ -35,6 +38,9 @@ pub fn get_recommended_settings(app: tauri::AppHandle) -> RecommendedSettings {
 }
 #[tauri::command]
 pub async fn fetch_text(url: String) -> Result<String, String> {
+    if !ALLOWED_FETCH_PREFIXES.iter().any(|p| url.starts_with(p)) {
+        return Err(format!("URL no permitida: {}", url));
+    }
     reqwest::get(&url)
         .await
         .map_err(|e| e.to_string())?
@@ -57,6 +63,62 @@ pub fn get_base_path(app: tauri::AppHandle) -> String {
         .to_string_lossy()
         .to_string()
 }
+/// Instalación en curso (solo una a la vez: comparten archivos temporales)
+#[derive(Default)]
+pub struct InstallState(pub Mutex<Option<tokio::task::AbortHandle>>);
+
+/// Error que recibe el frontend cuando el usuario cancela la instalación
+const INSTALL_CANCELLED: &str = "CANCELLED";
+
+/// Ejecuta una instalación/actualización registrándola para poder cancelarla.
+/// Si no termina bien y la instancia no existía antes, se borra lo descargado.
+async fn run_cancellable_install<F>(
+    app: &AppHandle,
+    base_path: &str,
+    modpack_id: &str,
+    task: F,
+) -> Result<(), String>
+where
+    F: Future<Output = anyhow::Result<()>> + Send + 'static,
+{
+    let instance_dir = Path::new(base_path).join("instances").join(modpack_id);
+    let existed = instance_dir.exists();
+    if existed {
+        // Marca la instancia como incompleta hasta que termine bien
+        tokio::fs::write(instance_dir.join(installer::INSTALLED_VERSION_FILE), "")
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    let handle = {
+        let state = app.state::<InstallState>();
+        let mut current = state.0.lock().unwrap();
+        if current.is_some() {
+            return Err("Ya hay una instalación en curso".to_string());
+        }
+        let handle = tokio::spawn(task);
+        *current = Some(handle.abort_handle());
+        handle
+    };
+
+    let result = handle.await;
+    *app.state::<InstallState>().0.lock().unwrap() = None;
+
+    let error = match result {
+        Ok(Ok(())) => return Ok(()),
+        Ok(Err(e)) => e.to_string(),
+        Err(e) if e.is_cancelled() => INSTALL_CANCELLED.to_string(),
+        Err(e) => e.to_string(),
+    };
+
+    warn!("[commands::install] {} no se completó: {}", modpack_id, error);
+    // Una instalación nueva a medias no debe parecer instalada
+    if !existed {
+        tokio::fs::remove_dir_all(&instance_dir).await.ok();
+    }
+    Err(error)
+}
+
 #[tauri::command]
 pub async fn install_modpack(
     app: AppHandle,
@@ -69,19 +131,19 @@ pub async fn install_modpack(
     modpack_id: String,
     modpack_version: Option<String>,
 ) -> Result<(), String> {
-    installer::install(
-        app,
-        base_path,
+    validate_modpack_id(&modpack_id)?;
+    let task = installer::install(
+        app.clone(),
+        base_path.clone(),
         mc_version,
         loader,
         loader_version,
         overrides_url,
         mods_url,
-        modpack_id,
+        modpack_id.clone(),
         modpack_version,
-    )
-    .await
-    .map_err(|e| e.to_string())
+    );
+    run_cancellable_install(&app, &base_path, &modpack_id, task).await
 }
 
 #[tauri::command]
@@ -93,24 +155,38 @@ pub async fn update_modpack(
     modpack_id: String,
     modpack_version: Option<String>,
 ) -> Result<(), String> {
-    installer::update(
-        app,
-        base_path,
+    validate_modpack_id(&modpack_id)?;
+    let task = installer::update(
+        app.clone(),
+        base_path.clone(),
         overrides_url,
         mods_url,
-        modpack_id,
+        modpack_id.clone(),
         modpack_version,
-    )
-    .await
-    .map_err(|e| e.to_string())
+    );
+    run_cancellable_install(&app, &base_path, &modpack_id, task).await
+}
+
+#[tauri::command]
+pub fn cancel_install(state: State<'_, InstallState>) -> bool {
+    match state.0.lock().unwrap().take() {
+        Some(handle) => {
+            handle.abort();
+            true
+        }
+        None => false,
+    }
 }
 
 #[tauri::command]
 pub fn is_modpack_installed(base_path: String, modpack_id: String) -> bool {
+    if validate_modpack_id(&modpack_id).is_err() {
+        return false;
+    }
     let base = Path::new(&base_path);
     let instance_dir = base.join("instances").join(&modpack_id);
     let mods_dir = instance_dir.join("mods");
-    let installed_version_file = instance_dir.join("installed_version");
+    let installed_version_file = instance_dir.join(installer::INSTALLED_VERSION_FILE);
 
     if !instance_dir.exists() || !mods_dir.exists() {
         return false;
@@ -122,24 +198,18 @@ pub fn is_modpack_installed(base_path: String, modpack_id: String) -> bool {
     }
 }
 
+/// Versión del modpack instalada, o `None` si no consta (instalaciones antiguas)
 #[tauri::command]
-pub fn check_needs_update(
-    base_path: String,
-    modpack_id: String,
-    modpack_version: Option<String>,
-) -> bool {
-    let base = Path::new(&base_path);
-    let instance_dir = base.join("instances").join(&modpack_id);
-    let installed_version_file = instance_dir.join("installed_version");
-
-    if !instance_dir.exists() {
-        return false;
-    }
-
-    match std::fs::read_to_string(&installed_version_file) {
-        Ok(content) => content.trim() != modpack_version.as_deref().unwrap_or(""),
-        Err(_) => false,
-    }
+pub async fn get_installed_version(base_path: String, modpack_id: String) -> Option<String> {
+    validate_modpack_id(&modpack_id).ok()?;
+    let file = Path::new(&base_path)
+        .join("instances")
+        .join(&modpack_id)
+        .join(installer::INSTALLED_VERSION_FILE);
+    tokio::fs::read_to_string(file)
+        .await
+        .ok()
+        .map(|v| v.trim().to_string())
 }
 
 #[tauri::command]
@@ -148,13 +218,11 @@ pub async fn launch_modpack(
     base_path: String,
     modpack_id: String,
     mc_version: String,
-    forge_version: String,
-    // Auth
+    loader: Option<String>,
+    loader_version: String,
     username: String,
-    uuid: String,
-    access_token: String,
-    is_online: bool,
-    // Settings
+    uuid: Option<String>,
+    access_token: Option<String>,
     min_ram_mb: Option<u32>,
     max_ram_mb: Option<u32>,
     fullscreen: Option<bool>,
@@ -162,6 +230,20 @@ pub async fn launch_modpack(
     window_height: Option<u32>,
     extra_jvm_args: Option<String>,
 ) -> Result<(), String> {
+    validate_modpack_id(&modpack_id)?;
+
+    // El launcher registra el proceso en RunningInstances y emite
+    // game_started/game_exited; aquí solo se evita el doble lanzamiento
+    if app
+        .state::<RunningInstances>()
+        .processes
+        .lock()
+        .unwrap()
+        .contains_key(&modpack_id)
+    {
+        return Err("Este modpack ya se está ejecutando".to_string());
+    }
+
     let settings = LaunchSettings {
         min_ram_mb: min_ram_mb.unwrap_or(512),
         max_ram_mb: max_ram_mb.unwrap_or(4096),
@@ -169,10 +251,6 @@ pub async fn launch_modpack(
         window_width: window_width.unwrap_or(1280),
         window_height: window_height.unwrap_or(720),
         extra_jvm_args: extra_jvm_args.unwrap_or_default(),
-        username,
-        uuid,
-        access_token,
-        is_online,
     };
 
     launch(
@@ -180,11 +258,27 @@ pub async fn launch_modpack(
         base_path,
         modpack_id,
         mc_version,
-        forge_version,
+        loader.unwrap_or_else(|| "forge".to_string()),
+        loader_version,
+        LaunchAuth::new(username, uuid, access_token),
         settings,
     )
     .await
     .map_err(|e| e.to_string())
+}
+
+/// Evita rutas fuera de `instances/` (p.ej. "../..") a partir de un id
+fn validate_modpack_id(modpack_id: &str) -> Result<(), String> {
+    let valid = !modpack_id.is_empty()
+        && modpack_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        && !modpack_id.contains("..");
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("Identificador de modpack inválido: {}", modpack_id))
+    }
 }
 
 #[tauri::command]
@@ -210,6 +304,9 @@ pub async fn open_directory(path: String) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let result = tokio::process::Command::new("xdg-open").arg(&path).spawn();
 
+    #[cfg(target_os = "macos")]
+    let result = tokio::process::Command::new("open").arg(&path).spawn();
+
     match result {
         Ok(_) => {
             info!("[commands::open_directory] ✓ Abierto: {}", path);
@@ -224,6 +321,7 @@ pub async fn open_directory(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn uninstall_modpack(base_path: String, modpack_id: String) -> Result<(), String> {
+    validate_modpack_id(&modpack_id)?;
     info!(
         "[commands::uninstall_modpack] Desinstalando: {}",
         modpack_id

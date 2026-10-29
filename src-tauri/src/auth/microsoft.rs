@@ -309,7 +309,7 @@ Html(r#"
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:47821").await?;
 
-    tokio::spawn(async move {
+    let server = tokio::spawn(async move {
         axum::serve(listener, app)
             .with_graceful_shutdown(async {
                 let _ = shutdown_rx.await;
@@ -319,10 +319,18 @@ Html(r#"
             .ok();
     });
 
-    open::that(auth_url.as_str())?;
+    if let Err(e) = open::that(auth_url.as_str()) {
+        server.abort();
+        return Err(e.into());
+    }
 
-    let code = tokio::time::timeout(tokio::time::Duration::from_secs(300), rx)
-        .await
+    let code = tokio::time::timeout(tokio::time::Duration::from_secs(300), rx).await;
+    // El cierre ordenado solo ocurre al recibir el callback: si se agota el
+    // tiempo hay que liberar el puerto para permitir otro inicio de sesión
+    if code.is_err() {
+        server.abort();
+    }
+    let code = code
         .context("Login timeout — no se completó en 5 minutos")?
         .context("Error recibiendo código")?;
 
@@ -387,9 +395,10 @@ pub async fn refresh_ms_token(
         .as_str()
         .context("access_token no encontrado")?
         .to_string();
+    // Microsoft no siempre rota el refresh token: si no llega, se conserva el anterior
     let refresh_token = json["refresh_token"]
         .as_str()
-        .context("refresh_token no encontrado")?
+        .unwrap_or(refresh_token)
         .to_string();
 
     info!("[microsoft] ✓ Token renovado");

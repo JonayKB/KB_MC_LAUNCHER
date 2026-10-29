@@ -3,10 +3,7 @@ type S = React.CSSProperties;
 
 export const discordCard = {
     wrap: (bannerUrl: string | null): S => ({
-        position: 'fixed',
-        bottom: '24px',
-        right: '24px',
-        width: '360px',
+        width: '100%',
         borderRadius: 'var(--radius-xl)',
         border: '1px solid var(--border)',
         overflow: 'hidden',
@@ -17,7 +14,6 @@ export const discordCard = {
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
-        zIndex: 50,
 
     }),
 
@@ -127,16 +123,12 @@ export const discordCard = {
 } as const;
 export const discordSkeleton = {
     wrap: {
-        position: 'fixed',
-        bottom: '24px',
-        right: '24px',
-        width: '360px',
+        width: '100%',
         borderRadius: 'var(--radius-xl)',
         border: '1px solid var(--border)',
         overflow: 'hidden',
         backgroundColor: 'var(--bg-elevated)',
         boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
-        zIndex: 50,
     } as S,
 
     content: {

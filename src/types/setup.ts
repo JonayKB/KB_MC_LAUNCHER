@@ -1,17 +1,9 @@
-export interface LoginStartResponse {
-    user_code: string;
-    verification_uri: string;
-    device_code: string;
-    interval: number;
-    expires_in: number;
-    message: string;
-}
-
 export interface LoginCompleteResponse {
     uuid: string;
     username: string;
     access_token: string;
     skin_head_base64?: string;
     refresh_token: string;
+    /** Segundos de validez del access_token */
     expires_in: number;
 }

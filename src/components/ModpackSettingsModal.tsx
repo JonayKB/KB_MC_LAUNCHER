@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ModpackSettings, DEFAULT_SETTINGS, RESOLUTIONS, RecommendedSettings } from '../types/modpackSettings';
-import { modal } from '../styles/modackSettingStyles';
+import { modal } from '../styles/modpackSettingStyles';
 import { invoke } from '@tauri-apps/api/core';
 import { CustomDropdown } from './CustomDropdown';
 

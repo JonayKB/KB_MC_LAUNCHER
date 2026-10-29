@@ -1,28 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
-import { ModpackVersion } from "../types";
+import { ModpackVersion, LOADER_LABELS, resolveLoader } from "../types/modpack";
 import { fetchModpackVersion } from "../repositories/ModpackRepository";
-import { detail, loading, installOverlay } from "../styles/modpackDetailStyles";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { detail, loading } from "../styles/modpackDetailStyles";
 import { invoke } from "@tauri-apps/api/core";
-import { formatBytes, formatSpeed, InstallProgress } from "../types/installer";
 import { useUser } from "../context/UserContext";
+import { useInstall } from "../context/InstallContext";
+import { useGameRunning } from "../hooks/useGameRunning";
+import { ensureModpackSettings, launchModpack } from "../repositories/ModpackActions";
 import { ask } from '@tauri-apps/plugin-dialog';
-import { ModpackSettings, RecommendedSettings } from "../types/modpackSettings";
+import { ModpackSettings } from "../types/modpackSettings";
 import ModpackSettingsModal, { loadSettings } from "../components/ModpackSettingsModal";
 const IMAGE_ROTATE_MS = 6000;
 
-interface ProgressState {
-    step: string;
-    percent: number;
-    downloadedBytes?: number;
-    totalBytes?: number | null;
-    speedBps?: number;
-    extractedFiles?: number;
-    totalFiles?: number;
-    speedFps?: number;
-    mode: 'step' | 'download' | 'extract';
-}
 
 
 export default function ModpackDetailScreen() {
@@ -30,67 +20,57 @@ export default function ModpackDetailScreen() {
     const [modpack, setModpack] = useState<ModpackVersion | null>(null);
     const [imageIndex, setImageIndex] = useState(0);
     const [isInstalled, setIsInstalled] = useState(false);
-    const [needsUpdate, setNeedsUpdate] = useState(false);
-    const [installing, setInstalling] = useState(false);
+    const [installedVersion, setInstalledVersion] = useState<string | null>(null);
     const [launching, setLaunching] = useState(false);
     const [launchError, setLaunchError] = useState<string | null>(null);
-    const [progress, setProgress] = useState<ProgressState | null>(null);
     const [menuOpen, setMenuOpen] = useState(false);
     const [menuHoverId, setMenuHoverId] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
-    const unlistenRef = useRef<UnlistenFn | null>(null);
     const location = useLocation();
     const name = (location.state as { name?: string } | null)?.name;
-    const { basePath, accounts } = useUser();
+    const { basePath, ensureActiveSession } = useUser();
+    const { job, isInstalling: anyInstalling, startInstall } = useInstall();
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const [reloadKey, setReloadKey] = useState(0);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [modpackSettings, setModpackSettings] = useState<ModpackSettings | null>(null);
-    const [running, setRunning] = useState(false);
-
+    const playing = useGameRunning(modpack?.modpackId);
     // Fetch modpack data
     useEffect(() => {
-        const fetchData = async () => {
-            if (id) {
-                const modpackData = await fetchModpackVersion(id);
+        if (!id) return;
+        let cancelled = false;
+        setModpack(null);
+        setLoadError(null);
+        fetchModpackVersion(id)
+            .then((modpackData) => {
+                if (cancelled) return;
                 setModpack(modpackData);
                 setImageIndex(0);
-            }
-        };
-        fetchData();
-    }, [id]);
+            })
+            .catch((err) => {
+                if (!cancelled) setLoadError(String(err));
+            });
+        return () => { cancelled = true; };
+    }, [id, reloadKey]);
+
 
 
     // Comprobar instalación cuando tenemos modpack y basePath
-    useEffect(() => {
+    function refreshInstallState() {
         if (!modpack || !basePath) return;
         invoke<boolean>('is_modpack_installed', {
             basePath,
             modpackId: modpack.modpackId,
-        }).then((result) => {
-            setIsInstalled(result)
-
-            invoke<boolean>('is_modpack_running', {
-                modpackId: modpack.modpackId,
-            }).then((result) => {
-                setRunning(result);
-            }).catch(() => setRunning(false));
-
-            invoke<boolean>('check_needs_update', {
-                basePath,
-                modpackId: modpack.modpackId,
-                modpackVersion: modpack.version,
-            }).then((needsUpdate) => {
-                if (needsUpdate) {
-                    console.log('Modpack necesita actualización:', modpack.modpackId);
-                    setNeedsUpdate(true);
-                }
-            }).catch((err) => {
-                console.error('Error al comprobar actualización del modpack:', err);
-            });
-
-
-
-        }).catch(() => setIsInstalled(false));
-    }, [modpack, basePath]);
+        }).then(setIsInstalled).catch(() => setIsInstalled(false));
+        invoke<string | null>('get_installed_version', {
+            basePath,
+            modpackId: modpack.modpackId,
+        }).then(setInstalledVersion).catch(() => setInstalledVersion(null));
+    }
+    // Se vuelve a comprobar cuando termina cualquier instalación (p.ej. lanzada
+    // desde esta pantalla, se cambió de pantalla y se ha vuelto)
+    const jobFinished = job !== null && job.status !== 'running' && job.status !== 'cancelling';
+    useEffect(refreshInstallState, [modpack, basePath, jobFinished]);
 
     // Rotación de imágenes
     useEffect(() => {
@@ -113,10 +93,6 @@ export default function ModpackDetailScreen() {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    // Limpieza del listener si desmonta mientras instala
-    useEffect(() => {
-        return () => { unlistenRef.current?.(); };
-    }, []);
     useEffect(() => {
         if (!modpack) return;
         setModpackSettings(loadSettings(modpack.modpackId));
@@ -129,19 +105,6 @@ export default function ModpackDetailScreen() {
             img.src = url;
         });
     }, [modpack]);
-    useEffect(() => {
-        if (!modpack) return;
-
-        let unlistenExited: UnlistenFn | undefined;
-
-        listen<{ modpackId: string; exitCode: number | null }>('game_exited', (e) => {
-            if (e.payload.modpackId === modpack.modpackId) {
-                setRunning(false);
-            }
-        }).then((fn) => { unlistenExited = fn; });
-
-        return () => { unlistenExited?.(); };
-    }, [modpack]);
     function handleOpenSettings() {
         setSettingsOpen(true);
     }
@@ -151,131 +114,22 @@ export default function ModpackDetailScreen() {
             return;
         }
         // Aplicar settings recomendados si el usuario no tiene los suyos
-        if (!modpackSettings || !localStorage.getItem(`kb_settings_${modpack.modpackId}`)) {
-            try {
-                const recommended = await invoke<RecommendedSettings>('get_recommended_settings');
-                const autoSettings: ModpackSettings = {
-                    minRamMb: recommended.min_ram_mb,
-                    maxRamMb: recommended.max_ram_mb,
-                    fullscreen: recommended.fullscreen,
-                    windowWidth: recommended.window_width,
-                    windowHeight: recommended.window_height,
-                    extraJvmArgs: recommended.extra_jvm_args,
-                };
-                // Guardar y aplicar
-                localStorage.setItem(
-                    `kb_settings_${modpack.modpackId}`,
-                    JSON.stringify(autoSettings)
-                );
-                setModpackSettings(autoSettings);
-                console.log('[install] Settings recomendados aplicados automáticamente:', autoSettings);
-            } catch (err) {
-                console.warn('[install] No se pudieron obtener settings recomendados:', err);
-            }
-        }
+        setModpackSettings(await ensureModpackSettings(modpack.modpackId));
 
-        setInstalling(true);
         setLaunchError(null);
-        setProgress({ step: 'Iniciando instalación...', percent: 0, mode: 'step' });
-
-        unlistenRef.current = await listen<InstallProgress>('install_progress', (e) => {
-            const p = e.payload;
-            if (p.type === 'step') {
-                setProgress({ step: p.step, percent: p.percent, mode: 'step' });
-            } else if (p.type === 'download') {
-                setProgress({
-                    step: p.step,
-                    percent: p.percent,
-                    mode: 'download',
-                    downloadedBytes: p.downloaded_bytes,
-                    totalBytes: p.total_bytes,
-                    speedBps: p.speed_bps,
-                });
-            } else if (p.type === 'extract') {
-                setProgress({
-                    step: p.step,
-                    percent: p.percent,
-                    mode: 'extract',
-                    extractedFiles: p.extracted_files,
-                    totalFiles: p.total_files,
-                    speedFps: p.speed_fps,
-                });
-            }
+        const ok = await startInstall(modpack, {
+            name: name || modpack.modpackId,
+            basePath,
+            isUpdate: isInstalled,
         });
-
-        try {
-            await invoke('install_modpack', {
-                basePath,
-                mcVersion: modpack.minecraftVersion,
-                loader: 'forge',
-                loaderVersion: modpack.forgeVersion,
-                overridesUrl: modpack.overridesUrl,
-                modsUrl: modpack.modsUrl,
-                modpackId: modpack.modpackId,
-                modpackVersion: modpack.version,
-            });
+        if (ok) {
             setIsInstalled(true);
-        } catch (err) {
-            console.error('Error durante la instalación:', err);
-            setLaunchError(`Error de instalación: ${err}`);
-        } finally {
-            unlistenRef.current?.();
-            setInstalling(false);
-            setProgress(null);
+            setInstalledVersion(modpack.version);
+        } else {
+            // Al cancelar/fallar puede haber quedado a medias: recomprobar en disco
+            refreshInstallState();
         }
     }
-    async function handleUpdate(modpack: ModpackVersion) {
-        if (!basePath) return;
-
-        setInstalling(true);
-        setLaunchError(null);
-        setProgress({ step: 'Iniciando actualización...', percent: 0, mode: 'step' });
-
-        unlistenRef.current = await listen<InstallProgress>('install_progress', (e) => {
-            const p = e.payload;
-            if (p.type === 'step') {
-                setProgress({ step: p.step, percent: p.percent, mode: 'step' });
-            } else if (p.type === 'download') {
-                setProgress({
-                    step: p.step,
-                    percent: p.percent,
-                    mode: 'download',
-                    downloadedBytes: p.downloaded_bytes,
-                    totalBytes: p.total_bytes,
-                    speedBps: p.speed_bps,
-                });
-            } else if (p.type === 'extract') {
-                setProgress({
-                    step: p.step,
-                    percent: p.percent,
-                    mode: 'extract',
-                    extractedFiles: p.extracted_files,
-                    totalFiles: p.total_files,
-                    speedFps: p.speed_fps,
-                });
-            }
-        });
-
-        try {
-            await invoke('update_modpack', {
-                basePath,
-                overridesUrl: modpack.overridesUrl,
-                modsUrl: modpack.modsUrl,
-                modpackId: modpack.modpackId,
-                modpackVersion: modpack.version,
-            });
-            setIsInstalled(true);
-            setNeedsUpdate(false);
-        } catch (err) {
-            console.error('Error durante la actualización:', err);
-            setLaunchError(`Error de actualización: ${err}`);
-        } finally {
-            unlistenRef.current?.();
-            setInstalling(false);
-            setProgress(null);
-        }
-    }
-
     async function handleOpenFiles(modpack: ModpackVersion) {
         if (!basePath) return;
         const instanceDir = `${basePath}/instances/${modpack.modpackId}`;
@@ -301,7 +155,7 @@ export default function ModpackDetailScreen() {
                 modpackId: modpack.modpackId,
             });
             setIsInstalled(false);
-            console.log('Modpack desinstalado:', modpack.modpackId);
+            setInstalledVersion(null);
         } catch (err) {
             console.error('Error desinstalando:', err);
             setLaunchError(`Error desinstalando: ${err}`);
@@ -312,33 +166,28 @@ export default function ModpackDetailScreen() {
         if (!basePath) return;
         setLaunching(true);
         setLaunchError(null);
-
-        const s = modpackSettings;
-        const account = accounts.find(a => a.isActual);
-
         try {
-            await invoke('launch_modpack', {
-                basePath,
-                modpackId: modpack.modpackId,
-                mcVersion: modpack.minecraftVersion,
-                forgeVersion: modpack.forgeVersion,
-                username: account?.username ?? 'Player',
-                uuid: account?.uuid ?? '00000000-0000-0000-0000-000000000000',
-                accessToken: account?.accessToken ?? '0',
-                isOnline: account?.isOnline ?? false,
-                minRamMb: s?.minRamMb ?? 512,
-                maxRamMb: s?.maxRamMb ?? 4096,
-                fullscreen: s?.fullscreen ?? false,
-                windowWidth: s?.windowWidth ?? 1280,
-                windowHeight: s?.windowHeight ?? 720,
-                extraJvmArgs: s?.extraJvmArgs ?? '',
-            });
-            setRunning(true);
+            const account = await ensureActiveSession();
+            await launchModpack(modpack, basePath, account, modpackSettings ?? undefined);
         } catch (err) {
             setLaunchError(`Error al lanzar: ${err}`);
         } finally {
             setLaunching(false);
         }
+    }
+
+    if (!modpack && loadError) {
+        return (
+            <div style={detail.screen(null)}>
+                <div style={loading.wrap}>
+                    <span style={loading.text}>No se pudo cargar la información del modpack.</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-faint)', maxWidth: '420px', textAlign: 'center' }}>{loadError}</span>
+                    <button style={{ ...detail.menuButton, width: 'auto', padding: '0 16px' }} onClick={() => setReloadKey(k => k + 1)}>
+                        Reintentar
+                    </button>
+                </div>
+            </div>
+        );
     }
 
     if (!modpack) {
@@ -353,7 +202,12 @@ export default function ModpackDetailScreen() {
     }
 
     const bgUrl = modpack.images?.[imageIndex] ?? null;
-    const isBusy = installing || launching || running;
+    const loaderInfo = resolveLoader(modpack);
+    const installing = job?.modpackId === modpack.modpackId && anyInstalling;
+    // Solo una instalación a la vez, aunque sea de otro modpack
+    const isBusy = anyInstalling || launching || playing;
+    // Sin versión registrada (instalación antigua) no se fuerza la actualización
+    const needsUpdate = isInstalled && installedVersion !== null && installedVersion !== modpack.version;
 
     const menuItems = [
         {
@@ -374,9 +228,10 @@ export default function ModpackDetailScreen() {
     ];
 
     const playButtonLabel = () => {
-        if (installing) return 'Instalando...';
+        if (installing) return `${isInstalled ? 'Actualizando' : 'Instalando'}... ${job?.progress.percent ?? 0}%`;
+        if (anyInstalling) return 'Otra instalación en curso';
         if (launching) return 'Lanzando...';
-        if (running) return 'En ejecución...';
+        if (playing) return 'En juego';
         if (needsUpdate) return 'Actualizar';
         if (isInstalled) return 'Jugar';
         return 'Instalar';
@@ -396,92 +251,19 @@ export default function ModpackDetailScreen() {
             <div style={detail.screen(bgUrl)}>
                 <div style={detail.overlay} />
 
-                {/* ── Overlay de instalación ───────────────────────── */}
-                {installing && progress && (
-                    <div style={installOverlay.wrap}>
-                        <div style={installOverlay.card}>
-                            <div style={installOverlay.header}>
-                                <span style={installOverlay.title}>Instalando modpack</span>
-                                <span style={installOverlay.step}>{progress.step}</span>
-                            </div>
-
-                            <div style={installOverlay.trackWrap}>
-                                <div style={installOverlay.trackRow}>
-                                    <span style={{ fontSize: '12px', color: 'var(--text-faint)' }}>Progreso</span>
-                                    <span style={installOverlay.percent}>{progress.percent}%</span>
-                                </div>
-                                <div style={installOverlay.track}>
-                                    <div style={installOverlay.bar(progress.percent)} />
-                                </div>
-                            </div>
-
-                            {progress.mode === 'download' && (
-                                <>
-                                    <div style={installOverlay.divider} />
-                                    <div style={installOverlay.statsRow}>
-                                        <div style={installOverlay.stat}>
-                                            <span style={installOverlay.statLabel}>Descargado</span>
-                                            <span style={installOverlay.statValue}>
-                                                {formatBytes(progress.downloadedBytes ?? 0)}
-                                                {progress.totalBytes ? ` / ${formatBytes(progress.totalBytes)}` : ''}
-                                            </span>
-                                        </div>
-                                        <div style={installOverlay.stat}>
-                                            <span style={installOverlay.statLabel}>Velocidad</span>
-                                            <span style={installOverlay.statValue}>
-                                                {formatSpeed(progress.speedBps ?? 0)}
-                                            </span>
-                                        </div>
-                                        {progress.totalBytes && (
-                                            <div style={installOverlay.stat}>
-                                                <span style={installOverlay.statLabel}>Restante</span>
-                                                <span style={installOverlay.statValue}>
-                                                    {formatBytes(progress.totalBytes - (progress.downloadedBytes ?? 0))}
-                                                </span>
-                                            </div>
-                                        )}
-                                    </div>
-                                </>
-                            )}
-
-                            {progress.mode === 'extract' && (
-                                <>
-                                    <div style={installOverlay.divider} />
-                                    <div style={installOverlay.statsRow}>
-                                        <div style={installOverlay.stat}>
-                                            <span style={installOverlay.statLabel}>Archivos</span>
-                                            <span style={installOverlay.statValue}>
-                                                {progress.extractedFiles ?? 0} / {progress.totalFiles ?? 0}
-                                            </span>
-                                        </div>
-                                        <div style={installOverlay.stat}>
-                                            <span style={installOverlay.statLabel}>Velocidad</span>
-                                            <span style={installOverlay.statValue}>
-                                                {(progress.speedFps ?? 0).toFixed(1)} arch/s
-                                            </span>
-                                        </div>
-                                        <div style={installOverlay.stat}>
-                                            <span style={installOverlay.statLabel}>Restantes</span>
-                                            <span style={installOverlay.statValue}>
-                                                {(progress.totalFiles ?? 0) - (progress.extractedFiles ?? 0)}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                    </div>
-
-                )
-                }
-
                 <div style={detail.content}>
                     <div style={detail.infoRow}>
                         <div style={detail.textCol}>
                             <h1 style={detail.title}>{name || modpack.modpackId}</h1>
                             <div style={detail.metaRow}>
                                 <span style={detail.metaTag}>MC {modpack.minecraftVersion}</span>
-                                <span style={detail.metaTag}>Forge {modpack.forgeVersion}</span>
+                                <span style={detail.metaTag}>{LOADER_LABELS[loaderInfo.loader]} {loaderInfo.loaderVersion}</span>
+                                <span style={detail.metaTag}>v{modpack.version}</span>
+                                {needsUpdate && (
+                                    <span style={{ ...detail.metaTag, color: 'var(--warning)' }}>
+                                        Instalada v{installedVersion}
+                                    </span>
+                                )}
                             </div>
                             {launchError && (
                                 <span style={{
@@ -504,16 +286,7 @@ export default function ModpackDetailScreen() {
                                     cursor: isBusy || !basePath ? 'not-allowed' : 'pointer',
                                 }}
                                 disabled={isBusy || !basePath}
-                                onClick={() => {
-                                    if (!modpack) return;
-                                    if (needsUpdate) {
-                                        handleUpdate(modpack);
-                                    } else if (isInstalled) {
-                                        handlePlay(modpack);
-                                    } else {
-                                        handleInstall(modpack);
-                                    }
-                                }}
+                                onClick={() => isInstalled && !needsUpdate ? handlePlay(modpack) : handleInstall(modpack)}
                             >
                                 {playButtonLabel()}
                             </button>

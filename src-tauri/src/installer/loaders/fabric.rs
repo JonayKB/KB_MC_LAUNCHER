@@ -1,48 +1,50 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 use tauri::AppHandle;
+use crate::installer::loaders::vanilla;
 use crate::installer::progress::{emit, ProgressPayload};
-use crate::installer::download;
 
+const FABRIC_META: &str = "https://meta.fabricmc.net/v2/versions/loader";
+
+/// Id de versión que genera Fabric, p.ej. `fabric-loader-0.16.10-1.20.1`
+pub fn version_id(mc_version: &str, loader_version: &str) -> String {
+    format!("fabric-loader-{}-{}", loader_version, mc_version)
+}
+
+/// Instala Fabric sin ejecutar su instalador: se descarga el perfil de
+/// meta.fabricmc.net (que hereda de vanilla) y sus libraries Maven.
 pub async fn install(
     app: &AppHandle,
     versions_dir: &Path,
     _instance_dir: &Path,
     mc_version: &str,
-    fabric_version: &str,
+    loader_version: &str,
 ) -> Result<()> {
-    emit(app, ProgressPayload::Step { step: "Descargando Fabric installer...".into(), percent: 10 });
+    let launcher_root = versions_dir
+        .parent()
+        .context("No se pudo determinar la raíz del launcher")?;
 
-    let installer_url = format!(
-        "https://maven.fabricmc.net/net/fabricmc/fabric-installer/{v}/fabric-installer-{v}.jar",
-        v = fabric_version,
-    );
+    vanilla::prepare(app, versions_dir, mc_version).await?;
 
-    let installer_path = download::download_to_temp(&installer_url, "fabric-installer.jar").await
-        .context("Error descargando Fabric installer")?;
+    emit(app, ProgressPayload::Step { step: "Descargando perfil de Fabric...".into(), percent: 60 });
 
-    emit(app, ProgressPayload::Step { step: "Ejecutando instalador de Fabric...".into(), percent: 30 });
+    let profile_url = format!("{}/{}/{}/profile/json", FABRIC_META, mc_version, loader_version);
+    let profile_str = reqwest::get(&profile_url).await
+        .context("Error contactando con meta.fabricmc.net")?
+        .error_for_status()
+        .context(format!("Fabric {} no existe para Minecraft {}", loader_version, mc_version))?
+        .text().await?;
+    let profile: serde_json::Value =
+        serde_json::from_str(&profile_str).context("Perfil de Fabric inválido")?;
 
-    let status = tokio::process::Command::new("java")
-        .args([
-            "-jar",
-            installer_path.to_str().unwrap(),
-            "client",
-            "-dir", versions_dir.parent().unwrap().to_str().unwrap(),
-            "-mcversion", mc_version,
-            "-loader", fabric_version,
-            "-noprofile",
-        ])
-        .status()
-        .await
-        .context("No se pudo ejecutar Java. ¿Está instalado?")?;
+    let id = version_id(mc_version, loader_version);
+    let version_dir = versions_dir.join(&id);
+    tokio::fs::create_dir_all(&version_dir).await?;
+    tokio::fs::write(version_dir.join(format!("{}.json", id)), &profile_str).await?;
 
-    tokio::fs::remove_file(&installer_path).await.ok();
+    vanilla::download_maven_libraries(&profile, launcher_root, app, "Libraries Fabric").await?;
 
-    if !status.success() {
-        anyhow::bail!("El instalador de Fabric falló con código {:?}", status.code());
-    }
-
-    emit(app, ProgressPayload::Step { step: "Fabric instalado".into(), percent: 55 });
+    emit(app, ProgressPayload::Step { step: "Fabric instalado".into(), percent: 100 });
+    tracing::info!("[fabric::install] ✓ {} instalado", id);
     Ok(())
 }

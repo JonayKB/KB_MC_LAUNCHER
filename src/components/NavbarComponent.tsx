@@ -47,25 +47,30 @@ function NavbarSkeleton({ expanded }: { expanded: boolean }) {
 export default function NavbarComponent() {
     const [modpacks, setModpacks] = useState<ModpackEntry[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadFailed, setLoadFailed] = useState(false);
+    const [reloadKey, setReloadKey] = useState(0);
     const [expanded, setExpanded] = useState(false);
     const [hoveredId, setHoveredId] = useState<string | null>(null);
     const [settingsHovered, setSettingsHovered] = useState(false);
     const navigate = useNavigate();
     const location = useLocation();
-const [settingsOpen, setSettingsOpen] = useState(false);
+    const [settingsOpen, setSettingsOpen] = useState(false);
     useEffect(() => {
         const fetchData = async () => {
+            setLoading(true);
+            setLoadFailed(false);
             try {
                 const modpacksData: ModpackIndex = await fetchModpackIndex();
                 setModpacks(modpacksData.modpacks);
             } catch (e) {
                 console.error('Error cargando modpacks:', e);
+                setLoadFailed(true);
             } finally {
                 setLoading(false);
             }
         };
         fetchData();
-    }, []);
+    }, [reloadKey]);
 
     return (
         <nav
@@ -76,6 +81,29 @@ const [settingsOpen, setSettingsOpen] = useState(false);
             <div style={navbar.list}>
                 {loading ? (
                     <NavbarSkeleton expanded={expanded} />
+                ) : loadFailed ? (
+                    <button
+                        onClick={() => setReloadKey(k => k + 1)}
+                        title="No se pudieron cargar los modpacks. Pulsa para reintentar."
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px',
+                            padding: '12px 22px',
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--text-muted)',
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                            fontSize: '13px',
+                        }}
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
+                            <polyline points="23 4 23 10 17 10" />
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                        </svg>
+                        {expanded && 'Reintentar'}
+                    </button>
                 ) : modpacks.length === 0 ? (
                     // Sin modpacks: mostrar un guión centrado
                     <div style={{
@@ -98,6 +126,7 @@ const [settingsOpen, setSettingsOpen] = useState(false);
                                     ? () => navigate('')
                                     : () => navigate(`/modpacks/${modpack.id}`, { state: { name: modpack.name } })
                                 }
+                                title={modpack.name}
                                 style={item.link(hoveredId === modpack.id, isActive)}
                                 onMouseEnter={() => setHoveredId(modpack.id)}
                                 onMouseLeave={() => setHoveredId(null)}
@@ -125,8 +154,8 @@ const [settingsOpen, setSettingsOpen] = useState(false);
                 <span style={settings.label(expanded)}>Ajustes</span>
             </div>
             {settingsOpen && (
-    <AppSettingsModal onClose={() => setSettingsOpen(false)} />
-)}
+                <AppSettingsModal onClose={() => setSettingsOpen(false)} />
+            )}
         </nav>
     );
 }

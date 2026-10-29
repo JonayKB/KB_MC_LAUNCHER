@@ -158,7 +158,8 @@ pub async fn download_many(
     let app_clone = app.cloned();
     let label = label.to_string();
 
-    let mut handles = Vec::new();
+    // JoinSet aborta todas las descargas pendientes si se cancela la instalación
+    let mut handles = tokio::task::JoinSet::new();
 
     for (url, dest) in items {
         let permit = semaphore.clone().acquire_owned().await.unwrap();
@@ -166,7 +167,7 @@ pub async fn download_many(
         let app = app_clone.clone();
         let label = label.clone();
 
-        let handle = tokio::spawn(async move {
+        handles.spawn(async move {
             let _permit = permit; // se libera al hacer drop
 
             // Antes: solo `dest.exists()`. Ahora también comprobamos que no esté vacío/corrupto.
@@ -225,13 +226,11 @@ pub async fn download_many(
                 error: last_err.unwrap_or_else(|| "Error desconocido".to_string()),
             })
         });
-
-        handles.push(handle);
     }
 
     let mut failures = Vec::new();
-    for handle in handles {
-        if let Ok(Some(failure)) = handle.await {
+    while let Some(result) = handles.join_next().await {
+        if let Ok(Some(failure)) = result {
             failures.push(failure);
         }
     }

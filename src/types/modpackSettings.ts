@@ -28,6 +28,7 @@ export interface RecommendedSettings {
     min_ram_mb: number;
     max_ram_mb: number;
     extra_jvm_args: string;
+    total_ram_mb: number;
     window_width: number;
     window_height: number;
     fullscreen: boolean;

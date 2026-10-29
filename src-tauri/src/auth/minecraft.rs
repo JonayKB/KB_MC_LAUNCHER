@@ -30,12 +30,16 @@ pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result
         .await
         .context("Error contactando Minecraft Services")?;
 
-    let _status = mc_resp.status();
+    let status = mc_resp.status();
 
     let body = mc_resp
         .text()
         .await
         .context("Error leyendo respuesta Minecraft")?;
+
+    if !status.is_success() {
+        anyhow::bail!("Minecraft Services devolvió {}", status);
+    }
 
     let mc_resp: serde_json::Value = serde_json::from_str(&body)?;
 
@@ -104,7 +108,8 @@ pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result
         .and_then(|skins| skins.iter().find(|s| s["state"].as_str() == Some("ACTIVE")))
         .and_then(|skin| skin["url"].as_str())
         .map(|s| s.to_string());
-    let expires_in = match mc_resp["expiresIn"].as_u64() {
+    // La API responde `expires_in`; se acepta también `expiresIn` por si acaso
+    let expires_in = match mc_resp["expires_in"].as_u64().or_else(|| mc_resp["expiresIn"].as_u64()) {
         Some(v) => {
             info!(
                 "[minecraft] expiresIn del token: {} segundos ({} horas)",

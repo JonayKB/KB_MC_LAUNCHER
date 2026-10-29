@@ -19,6 +19,7 @@ pub struct RunningInstances {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
+        .manage(commands::InstallState::default())
         .setup(|app| {
             init_logging(app.handle());
             #[cfg(desktop)]
@@ -86,8 +87,9 @@ pub fn run() {
             commands::auth_microsoft,
             commands::auth_refresh,
             commands::update_modpack,
-            commands::check_needs_update,
             commands::is_modpack_running,
+            commands::get_installed_version,
+            commands::cancel_install,
         ])
         .manage(RunningInstances::default())
         .run(tauri::generate_context!())

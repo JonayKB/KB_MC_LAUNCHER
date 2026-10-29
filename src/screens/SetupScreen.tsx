@@ -3,7 +3,7 @@ import { useUser } from '../context/UserContext';
 import { layout, logo, header, box, text, btn, input as inp } from '../styles/components';
 import { invoke } from '@tauri-apps/api/core';
 import { LoginCompleteResponse } from '../types/setup';
-import { Account } from '../types/account';
+import { accountFromLogin, validateOfflineUsername } from '../types/account';
 
 type Step = 'owns_minecraft' | 'offline_username' | 'microsoft_prompt';
 
@@ -15,6 +15,8 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
     const [yesHovered, setYesHovered] = useState(false);
     const [noHovered, setNoHovered] = useState(false);
     const [continueHovered, setContinueHovered] = useState(false);
+    const [backHovered, setBackHovered] = useState(false);
+    const [loginHovered, setLoginHovered] = useState(false);
     const [loginState, setLoginState] = useState<'idle' | 'waiting_code' | 'polling' | 'done'>('idle');
     const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -24,23 +26,14 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
     async function handleMicrosoftLogin() {
         try {
             setLoginState('polling');
+            setLoginError(null);
 
             const result =
                 await invoke<LoginCompleteResponse>(
                     'auth_microsoft'
                 );
 
-            const userAccount = {
-                isOnline: true,
-                username: result.username,
-                uuid: result.uuid,
-                accessToken: result.access_token,
-                refreshToken: result.refresh_token,
-                tokenExpiresAt: Date.now() + result.expires_in * 1000,
-                skinHeadBase64: result.skin_head_base64,
-                isActual: true
-            } as Account;
-            setAccounts([userAccount]);
+            setAccounts([accountFromLogin(result)]);
 
             setLoginState('done');
 
@@ -52,12 +45,9 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
     }
     function handleOfflineSubmit() {
         const name = inputUsername.trim();
-        if (name.length < 3 || name.length > 16) {
-            setInputError('El nombre debe tener entre 3 y 16 caracteres');
-            return;
-        }
-        if (!/^[a-zA-Z0-9_]+$/.test(name)) {
-            setInputError('Solo letras, números y guiones bajos');
+        const error = validateOfflineUsername(name);
+        if (error) {
+            setInputError(error);
             return;
         }
         const userAccount = {
@@ -93,7 +83,7 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
                     <p style={header.subtitle}>
                         {step === 'owns_minecraft' && '¿Tienes Minecraft Java Edition comprado?'}
                         {step === 'offline_username' && 'Elige tu nombre para el modo offline'}
-                        {step === 'microsoft_prompt' && 'Iniciarás sesión al lanzar el juego'}
+                        {step === 'microsoft_prompt' && 'Se abrirá tu navegador para iniciar sesión'}
                     </p>
                 </div>
 
@@ -136,10 +126,24 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
                     </div>
                 )}
 
+                {step !== 'owns_minecraft' && loginState !== 'polling' && (
+                    <button
+                        style={{ ...btn.secondary, ...(backHovered ? btn.secondaryHover : {}), order: 1 }}
+                        onMouseEnter={() => setBackHovered(true)}
+                        onMouseLeave={() => setBackHovered(false)}
+                        onClick={() => { setStep('owns_minecraft'); setInputError(null); setLoginError(null); }}
+                    >Volver</button>
+                )}
+
                 {step === 'microsoft_prompt' && (
                     <div style={layout.col('16px')}>
                         {loginState === 'idle' && (
-                            <button onClick={handleMicrosoftLogin} style={btn.primary}>
+                            <button
+                                onClick={handleMicrosoftLogin}
+                                style={{ ...btn.primary, ...(loginHovered ? btn.primaryHover : {}) }}
+                                onMouseEnter={() => setLoginHovered(true)}
+                                onMouseLeave={() => setLoginHovered(false)}
+                            >
                                 Iniciar sesión con Microsoft
                             </button>
                         )}

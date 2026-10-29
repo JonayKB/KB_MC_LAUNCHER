@@ -11,6 +11,9 @@ pub use progress::ProgressPayload;
 use std::path::Path;
 use tauri::AppHandle;
 
+/// Fichero dentro de la instancia con la versión del modpack instalada
+pub const INSTALLED_VERSION_FILE: &str = "installed_version";
+
 pub async fn install(
     app: AppHandle,
     base_path: String,
@@ -28,6 +31,11 @@ pub async fn install(
     let mods_dir = instance_dir.join("mods");
 
     tokio::fs::create_dir_all(&versions_dir).await?;
+    // Los mods los gestiona el modpack: si se reinstala sobre una instancia
+    // existente (p.ej. a medias), no deben quedar versiones antiguas mezcladas
+    if mods_dir.exists() {
+        tokio::fs::remove_dir_all(&mods_dir).await?;
+    }
     tokio::fs::create_dir_all(&mods_dir).await?;
 
     emit(
@@ -81,7 +89,7 @@ pub async fn install(
 
     let installed_version_content = modpack_version.as_deref().unwrap_or("???");
     tokio::fs::write(
-        instance_dir.join("installed_version"),
+        instance_dir.join(INSTALLED_VERSION_FILE),
         installed_version_content,
     )
     .await?;
@@ -140,7 +148,7 @@ pub async fn update(
 
     let installed_version_content = modpack_version.as_deref().unwrap_or("???");
     tokio::fs::write(
-        instance_dir.join("installed_version"),
+        instance_dir.join(INSTALLED_VERSION_FILE),
         installed_version_content,
     )
     .await?;

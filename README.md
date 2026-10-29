@@ -94,6 +94,27 @@ npm run tauri build
 just package
 ```
 
+## Modpack format
+
+Each modpack publishes a `latest.json` at `https://me.jonaykb.com/modpacks/<id>/latest.json`:
+
+```json
+{
+  "id": "mypack-1.2.0",
+  "modpackId": "mypack",
+  "version": "1.2.0",
+  "minecraftVersion": "1.20.1",
+  "loader": "fabric",
+  "loaderVersion": "0.16.10",
+  "modsUrl": "https://.../mods.zip",
+  "overridesUrl": "https://.../overrides.zip",
+  "changelog": "Optional text shown on the home screen",
+  "images": ["https://.../screenshot.png"]
+}
+```
+
+`loader` can be `forge` (default) or `fabric`. Older files that only set `forgeVersion` keep working as Forge. When `version` changes, installed players get an **Update** button; updating replaces the whole `mods/` folder.
+
 ## Releases
 
 Releases are automated through GitHub Actions (`.github/workflows/release.yml`): pushes to `main` read the version from `src-tauri/tauri.conf.json`, tag the commit, and build/publish installers automatically.

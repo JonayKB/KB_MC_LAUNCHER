@@ -1,3 +1,4 @@
+use crate::installer::loaders::fabric;
 use crate::installer::requirements::get_java_binary_async;
 use crate::RunningInstances;
 use anyhow::{Context, Result};
@@ -11,12 +12,47 @@ pub struct LaunchSettings {
     pub window_width: u32,
     pub window_height: u32,
     pub extra_jvm_args: String,
-    // ── Auth ──────────────────────────────────────────────
+}
+/// Datos de sesión con los que se lanza el juego
+pub struct LaunchAuth {
     pub username: String,
     pub uuid: String,
     pub access_token: String,
-    pub is_online: bool,
+    pub user_type: &'static str,
 }
+
+impl LaunchAuth {
+    /// Cuenta Microsoft (online) si hay uuid y token; si no, cuenta offline
+    pub fn new(username: String, uuid: Option<String>, access_token: Option<String>) -> Self {
+        match (uuid, access_token) {
+            (Some(uuid), Some(access_token)) if !uuid.is_empty() && !access_token.is_empty() => {
+                Self {
+                    username,
+                    uuid,
+                    access_token,
+                    user_type: "msa",
+                }
+            }
+            _ => Self {
+                uuid: offline_uuid(&username),
+                username,
+                access_token: "0".to_string(),
+                user_type: "legacy",
+            },
+        }
+    }
+}
+
+/// UUID offline igual que el cliente vanilla:
+/// `UUID.nameUUIDFromBytes("OfflinePlayer:<nombre>")` (MD5, versión 3)
+pub fn offline_uuid(username: &str) -> String {
+    use md5::{Digest, Md5};
+    let mut bytes: [u8; 16] = Md5::digest(format!("OfflinePlayer:{}", username).as_bytes()).into();
+    bytes[6] = (bytes[6] & 0x0f) | 0x30;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 impl Default for LaunchSettings {
     fn default() -> Self {
         Self {
@@ -26,10 +62,6 @@ impl Default for LaunchSettings {
             window_width: 1280,
             window_height: 720,
             extra_jvm_args: String::new(),
-            username: "Player".to_string(),
-            uuid: "0".to_string(),
-            access_token: "0".to_string(),
-            is_online: false,
         }
     }
 }
@@ -62,9 +94,12 @@ pub async fn launch(
     base_path: String,
     modpack_id: String,
     mc_version: String,
-    forge_version: String,
+    loader: String,
+    loader_version: String,
+    auth: LaunchAuth,
     settings: LaunchSettings,
 ) -> Result<()> {
+    let username = auth.username.clone();
     let base = Path::new(&base_path);
     let instance_dir = base.join("instances").join(&modpack_id);
     let versions_dir = base.join("versions");
@@ -82,16 +117,20 @@ pub async fn launch(
     );
     set_gpu_preference_high_performance(&java_bin);
 
-    let forge_id = format!("{}-forge-{}", mc_version, forge_version);
-    let forge_json_path = versions_dir
-        .join(&forge_id)
-        .join(format!("{}.json", forge_id));
+    let version_id = match loader.as_str() {
+        "forge" => format!("{}-forge-{}", mc_version, loader_version),
+        "fabric" => fabric::version_id(&mc_version, &loader_version),
+        other => anyhow::bail!("El loader '{}' todavía no está soportado", other),
+    };
+    let loader_json_path = versions_dir
+        .join(&version_id)
+        .join(format!("{}.json", version_id));
 
-    let forge_json_str = tokio::fs::read_to_string(&forge_json_path)
+    let loader_json_str = tokio::fs::read_to_string(&loader_json_path)
         .await
-        .context("No se pudo leer el JSON de Forge")?;
-    let forge_json: serde_json::Value =
-        serde_json::from_str(&forge_json_str).context("JSON de Forge inválido")?;
+        .context("No se pudo leer el JSON del loader. ¿Está instalado el modpack?")?;
+    let loader_json: serde_json::Value =
+        serde_json::from_str(&loader_json_str).context("JSON del loader inválido")?;
 
     let mc_json_path = versions_dir
         .join(&mc_version)
@@ -101,16 +140,21 @@ pub async fn launch(
         .context("No se pudo leer el JSON de Minecraft")?;
     let mc_json: serde_json::Value =
         serde_json::from_str(&mc_json_str).context("JSON de Minecraft inválido")?;
-
-    let main_class = forge_json["mainClass"]
+    // El índice de assets no coincide con la versión (1.20.1 usa el índice "5")
+    let asset_index = mc_json["assetIndex"]["id"]
         .as_str()
-        .context("mainClass no encontrado en JSON de Forge")?
+        .unwrap_or(&mc_version)
+        .to_string();
+
+    let main_class = loader_json["mainClass"]
+        .as_str()
+        .context("mainClass no encontrado en JSON del loader")?
         .to_string();
 
     // ── Classpath ─────────────────────────────────────────────
     let mut classpath_entries: Vec<PathBuf> = Vec::new();
     add_libraries(&mc_json, &libs_dir, &mut classpath_entries);
-    add_libraries(&forge_json, &libs_dir, &mut classpath_entries);
+    add_libraries(&loader_json, &libs_dir, &mut classpath_entries);
     classpath_entries.sort();
     classpath_entries.dedup();
 
@@ -121,11 +165,11 @@ pub async fn launch(
         classpath_entries.push(mc_jar);
     }
 
-    let forge_jar = versions_dir
-        .join(&forge_id)
-        .join(format!("{}.jar", forge_id));
-    if forge_jar.exists() {
-        classpath_entries.push(forge_jar);
+    let loader_jar = versions_dir
+        .join(&version_id)
+        .join(format!("{}.jar", version_id));
+    if loader_jar.exists() {
+        classpath_entries.push(loader_jar);
     }
 
     let sep = if cfg!(windows) { ";" } else { ":" };
@@ -136,7 +180,7 @@ pub async fn launch(
         .join(sep);
 
     // ── Module path ───────────────────────────────────────────
-    let ignore_list: Vec<&str> = forge_json["arguments"]["jvm"]
+    let ignore_list: Vec<&str> = loader_json["arguments"]["jvm"]
         .as_array()
         .and_then(|args| {
             args.iter().find_map(|a| {
@@ -196,10 +240,9 @@ pub async fn launch(
             jvm_args.push(arg.to_string());
         }
     }
-    // Args del JSON de Forge
-    // En launcher.rs, al procesar los JVM args del JSON de Forge:
+    // Args JVM del JSON del loader (Forge/Fabric)
 
-    if let Some(jvm_json_args) = forge_json["arguments"]["jvm"].as_array() {
+    if let Some(jvm_json_args) = loader_json["arguments"]["jvm"].as_array() {
         let mut skip_next = false;
         for arg in jvm_json_args {
             if skip_next {
@@ -216,10 +259,10 @@ pub async fn launch(
                     skip_next = true;
                     continue;
                 }
-                // ← NUEVO: filtrar args de GC del JSON de Forge
+                // Filtrar args de GC del JSON del loader
                 // para que no conflicten con los nuestros
                 if is_gc_arg(s) {
-                    debug!("[launcher] Filtrando GC arg del JSON de Forge: {}", s);
+                    debug!("[launcher] Filtrando GC arg del JSON del loader: {}", s);
                     continue;
                 }
                 let resolved = resolve_arg(
@@ -228,7 +271,8 @@ pub async fn launch(
                     &instance_dir,
                     &libs_dir,
                     &mc_version,
-                    &settings.username,
+                    &asset_index,
+                    &auth,
                 );
                 if !resolved.is_empty() {
                     jvm_args.push(resolved);
@@ -250,7 +294,8 @@ pub async fn launch(
                         &instance_dir,
                         &libs_dir,
                         &mc_version,
-                        &settings.username,
+                        &asset_index,
+                        &auth,
                     );
                     if !resolved.is_empty() {
                         jvm_args.push(resolved);
@@ -270,7 +315,8 @@ pub async fn launch(
                                 &instance_dir,
                                 &libs_dir,
                                 &mc_version,
-                                &settings.username,
+                                &asset_index,
+                                &auth,
                             );
                             if !resolved.is_empty() {
                                 jvm_args.push(resolved);
@@ -288,21 +334,21 @@ pub async fn launch(
     // ── Game args ─────────────────────────────────────────────
     let mut game_args: Vec<String> = vec![
         "--username".to_string(),
-        settings.username.clone(),
+        username.clone(),
         "--version".to_string(),
-        forge_id.clone(),
+        version_id.clone(),
         "--gameDir".to_string(),
         instance_dir.to_string_lossy().to_string(),
         "--assetsDir".to_string(),
         base.join("assets").to_string_lossy().to_string(),
         "--assetIndex".to_string(),
-        mc_version.clone(),
+        asset_index.clone(),
         "--uuid".to_string(),
-        settings.uuid.clone(),
+        auth.uuid.clone(),
         "--accessToken".to_string(),
-        settings.access_token.clone(),
+        auth.access_token.clone(),
         "--userType".to_string(),
-        if settings.is_online { "msa" } else { "legacy" }.to_string(),
+        auth.user_type.to_string(),
         "--versionType".to_string(),
         "release".to_string(),
     ];
@@ -322,7 +368,7 @@ pub async fn launch(
         );
     }
 
-    if let Some(game_json_args) = forge_json["arguments"]["game"].as_array() {
+    if let Some(game_json_args) = loader_json["arguments"]["game"].as_array() {
         for arg in game_json_args {
             if let Some(s) = arg.as_str() {
                 let resolved = resolve_arg(
@@ -331,7 +377,8 @@ pub async fn launch(
                     &instance_dir,
                     &libs_dir,
                     &mc_version,
-                    &settings.username,
+                    &asset_index,
+                    &auth,
                 );
                 game_args.push(resolved);
             }
@@ -346,7 +393,13 @@ pub async fn launch(
     info!("[launcher::launch] Lanzando con {} args", cmd_args.len());
     info!("[launcher] CMD ARGS COMPLETOS:");
     for (i, arg) in cmd_args.iter().enumerate() {
-        info!("[launcher]   [{}] {}", i, arg);
+        // Nunca escribir el token de sesión en los logs
+        let shown = if *arg == auth.access_token && auth.user_type == "msa" {
+            "***"
+        } else {
+            arg.as_str()
+        };
+        info!("[launcher]   [{}] {}", i, shown);
     }
     match tokio::process::Command::new(&java_bin)
         .args(&cmd_args)
@@ -467,17 +520,18 @@ fn resolve_arg(
     instance_dir: &Path,
     libs_dir: &Path,
     mc_version: &str,
-    username: &str,
+    asset_index: &str,
+    auth: &LaunchAuth,
 ) -> String {
     let sep = if cfg!(windows) { ";" } else { ":" };
     arg.replace("${game_directory}", &instance_dir.to_string_lossy())
         .replace("${assets_root}", &format!("{}/assets", base_path))
-        .replace("${assets_index_name}", mc_version)
+        .replace("${assets_index_name}", asset_index)
         .replace("${version_name}", mc_version)
-        .replace("${auth_player_name}", username)
-        .replace("${auth_uuid}", "0")
-        .replace("${auth_access_token}", "0")
-        .replace("${user_type}", "legacy")
+        .replace("${auth_player_name}", &auth.username)
+        .replace("${auth_uuid}", &auth.uuid)
+        .replace("${auth_access_token}", &auth.access_token)
+        .replace("${user_type}", auth.user_type)
         .replace("${version_type}", "release")
         .replace(
             "${natives_directory}",
@@ -502,4 +556,29 @@ fn is_gc_arg(arg: &str) -> bool {
         || arg.starts_with("-XX:G1")
         || arg.starts_with("-XX:MaxGCPauseMillis")
         || arg.starts_with("-XX:+ParallelRefProcEnabled")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offline_uuid_matches_vanilla() {
+        // Valor de UUID.nameUUIDFromBytes("OfflinePlayer:Notch") en Java
+        assert_eq!(offline_uuid("Notch"), "b50ad385829d3141a2167e7d7539ba7f");
+    }
+
+    #[test]
+    fn auth_without_token_is_offline() {
+        let auth = LaunchAuth::new("Steve".into(), Some("abc".into()), None);
+        assert_eq!(auth.user_type, "legacy");
+        assert_eq!(auth.uuid, offline_uuid("Steve"));
+    }
+
+    #[test]
+    fn auth_with_token_is_msa() {
+        let auth = LaunchAuth::new("Steve".into(), Some("abc".into()), Some("tok".into()));
+        assert_eq!(auth.user_type, "msa");
+        assert_eq!(auth.access_token, "tok");
+    }
 }
