@@ -1,204 +1,94 @@
 use crate::installer::download;
+use crate::installer::loaders::vanilla::{self, download_libraries};
+use crate::installer::progress::{self, emit, ProgressPayload, Reporter};
 use crate::process_ext::NoConsoleWindow;
-use crate::installer::loaders::vanilla::{download_assets, download_libraries};
-use crate::installer::progress::{self, emit, ProgressPayload};
-use crate::installer::requirements::{
-    check_java_by_minecraft_version, get_java_binary_async, install_java_by_minecraft_version,
-};
 use anyhow::{Context, Result};
 use std::path::Path;
-use tauri::AppHandle;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
-const VERSION_MANIFEST: &str = "https://launchermeta.mojang.com/mc/game/version_manifest.json";
+/// Id de versión que genera el instalador de Forge
+pub fn version_id(mc_version: &str, forge_version: &str) -> String {
+    format!("{}-forge-{}", mc_version, forge_version)
+}
+
+/// Lo que cambia entre el instalador de Forge y el de NeoForge
+pub struct LoaderInstaller<'a> {
+    pub name: &'a str,
+    pub url: String,
+    /// Argumento que pide instalar el cliente
+    pub client_flag: &'a str,
+    /// Carpeta que crea dentro de `versions/`
+    pub version_id: String,
+}
 
 pub async fn install(
-    app: &AppHandle,
+    reporter: &Reporter,
     versions_dir: &Path,
-    instance_dir: &Path,
     mc_version: &str,
     forge_version: &str,
 ) -> Result<()> {
-    info!(
-        "[forge::install] Iniciando instalación — MC {} | Forge {}",
-        mc_version, forge_version
-    );
-    debug!("[forge::install] versions_dir: {:?}", versions_dir);
-    debug!("[forge::install] instance_dir: {:?}", instance_dir);
+    let installer = LoaderInstaller {
+        name: "Forge",
+        url: format!(
+            "https://maven.minecraftforge.net/net/minecraftforge/forge/{mc}-{fv}/forge-{mc}-{fv}-installer.jar",
+            mc = mc_version, fv = forge_version,
+        ),
+        client_flag: "--installClient",
+        version_id: version_id(mc_version, forge_version),
+    };
+    run_installer(reporter, versions_dir, mc_version, installer).await
+}
+
+/// Minecraft vanilla, el instalador oficial del loader y las libraries que falten
+pub async fn run_installer(
+    reporter: &Reporter,
+    versions_dir: &Path,
+    mc_version: &str,
+    installer: LoaderInstaller<'_>,
+) -> Result<()> {
+    let LoaderInstaller { name, url, client_flag, version_id } = installer;
+    info!("[{}] Instalando {} sobre Minecraft {}", name, version_id, mc_version);
 
     let launcher_root = versions_dir
         .parent()
         .context("No se pudo determinar la raíz del launcher")?;
 
-    debug!("[forge::install] launcher_root: {:?}", launcher_root);
+    let prepared = vanilla::prepare(reporter, versions_dir, mc_version, (0, 60)).await?;
 
-    // ── 0. Java ───────────────────────────────────────────────
-    progress::sub_range(0, 15);
-    info!(
-        "[forge::install] Comprobando Java para MC {}...",
-        mc_version
-    );
-    if !check_java_by_minecraft_version(mc_version, launcher_root).await {
-        install_java_by_minecraft_version(mc_version, launcher_root).await?;
-    }
-
-    let java_bin = get_java_binary_async(launcher_root, mc_version).await;
-    info!("[forge::install] Usando Java: {}", java_bin);
-
-    tokio::fs::create_dir_all(versions_dir).await.ok();
-    tokio::fs::create_dir_all(instance_dir).await.ok();
-
-    // ── 1. JSON y JAR de vanilla ──────────────────────────────
-    let mc_version_dir = versions_dir.join(mc_version);
-    tokio::fs::create_dir_all(&mc_version_dir).await.ok();
-
-    let mc_json_path = mc_version_dir.join(format!("{}.json", mc_version));
-    let mc_jar_path = mc_version_dir.join(format!("{}.jar", mc_version));
-
-    if !mc_json_path.exists() {
-        info!("[forge::install] Descargando manifest de Mojang...");
-        emit(
-            app,
-            ProgressPayload::Step {
-                step: "Obteniendo manifest de Mojang...".into(),
-                percent: 5,
-            },
-        );
-
-        let manifest: serde_json::Value = reqwest::get(VERSION_MANIFEST)
-            .await?
-            .json()
-            .await
-            .context("Error parseando manifest de Mojang")?;
-
-        let version_url = manifest["versions"]
-            .as_array()
-            .context("versions no es array")?
-            .iter()
-            .find(|v| v["id"].as_str() == Some(mc_version))
-            .context(format!("Versión {} no encontrada en manifest", mc_version))?["url"]
-            .as_str()
-            .context("url inválida")?
-            .to_string();
-
-        debug!("[forge::install] version_url: {}", version_url);
-
-        emit(
-            app,
-            ProgressPayload::Step {
-                step: format!("Descargando Minecraft {}.json...", mc_version),
-                percent: 8,
-            },
-        );
-
-        let version_json_str = reqwest::get(&version_url)
-            .await?
-            .text()
-            .await
-            .context("Error descargando version JSON")?;
-
-        tokio::fs::write(&mc_json_path, &version_json_str).await?;
-        info!(
-            "[forge::install] {}.json guardado en {:?}",
-            mc_version, mc_json_path
-        );
-    } else {
-        info!(
-            "[forge::install] {}.json ya existe, omitiendo descarga",
-            mc_version
-        );
-    }
-
-    if !mc_jar_path.exists() {
-        info!("[forge::install] Descargando {}.jar...", mc_version);
-        let mc_json_str = tokio::fs::read_to_string(&mc_json_path).await?;
-        let mc_json: serde_json::Value = serde_json::from_str(&mc_json_str)?;
-        let client_url = mc_json["downloads"]["client"]["url"]
-            .as_str()
-            .context("URL del cliente vanilla no encontrada")?;
-
-        debug!("[forge::install] client_url: {}", client_url);
-
-        download::download_to(
-            client_url,
-            &mc_jar_path,
-            Some(app),
-            &format!("Descargando Minecraft {}.jar...", mc_version),
-        )
-        .await?;
-
-        info!(
-            "[forge::install] {}.jar descargado OK ({:?})",
-            mc_version, mc_jar_path
-        );
-    } else {
-        info!(
-            "[forge::install] {}.jar ya existe, omitiendo descarga",
-            mc_version
-        );
-    }
-
-    // ── 2. launcher_profiles.json dummy ──────────────────────
+    // El instalador se niega a funcionar sin este archivo
     let profiles_path = launcher_root.join("launcher_profiles.json");
     if !profiles_path.exists() {
-        debug!("[forge::install] Creando launcher_profiles.json dummy");
         tokio::fs::write(&profiles_path, r#"{"profiles":{}}"#)
             .await
             .context("No se pudo crear launcher_profiles.json")?;
     }
 
-    // ── 3. Instalador de Forge ────────────────────────────────
-    let installer_url = format!(
-        "https://maven.minecraftforge.net/net/minecraftforge/forge/{mc}-{fv}/forge-{mc}-{fv}-installer.jar",
-        mc = mc_version, fv = forge_version,
-    );
-
-    info!(
-        "[forge::install] Descargando instalador de Forge desde: {}",
-        installer_url
-    );
-
-    progress::sub_range(15, 25);
+    progress::sub_range(60, 70);
     let installer_path = download::download_to_temp_with_progress(
-        app,
-        &installer_url,
-        "forge-installer.jar",
-        &format!("Descargando Forge {}-{}...", mc_version, forge_version),
-        25,
+        reporter,
+        &url,
+        &format!("{}-installer.jar", name.to_lowercase()),
+        &format!("Descargando {}...", name),
     )
     .await
-    .context("Error descargando Forge installer")?;
-
-    info!(
-        "[forge::install] Instalador descargado en {:?}",
-        installer_path
-    );
+    .with_context(|| format!("Error descargando el instalador de {}", name))?;
 
     // Sin progreso propio: se queda al inicio del tramo hasta que termine
-    progress::sub_range(25, 55);
+    progress::sub_range(70, 90);
     emit(
-        app,
-        ProgressPayload::Step {
-            step: "Ejecutando instalador de Forge...".into(),
-            percent: 0,
-        },
+        reporter,
+        ProgressPayload::Step { step: format!("Ejecutando instalador de {}...", name), percent: 0 },
     );
 
-    info!(
-        "[forge::install] Ejecutando: {} -jar {:?} --installClient {:?}",
-        java_bin, installer_path, launcher_root
-    );
-
-    let output = tokio::process::Command::new(&java_bin)
-        .args([
-            "-jar",
-            installer_path.to_str().unwrap(),
-            "--installClient",
-            launcher_root.to_str().unwrap(),
-        ])
+    let output = tokio::process::Command::new(&prepared.java_bin)
+        .arg("-jar")
+        .arg(&installer_path)
+        .arg(client_flag)
+        .arg(launcher_root)
         // Si se cancela la instalación, matar también el instalador
         .kill_on_drop(true)
         .no_console_window()
+        .current_dir(launcher_root)
         .output()
         .await
         .context("No se pudo ejecutar Java")?;
@@ -208,78 +98,30 @@ pub async fn install(
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        error!(
-            "[forge::install] Instalador falló con código {:?}",
-            output.status.code()
-        );
-        error!("[forge::install] STDOUT:\n{}", stdout);
-        error!("[forge::install] STDERR:\n{}", stderr);
+        error!("[{}] El instalador falló con {:?}\nSTDOUT:\n{}\nSTDERR:\n{}", name, output.status.code(), stdout, stderr);
         anyhow::bail!(
-            "El instalador de Forge falló con código {:?}\nSTDOUT:\n{}\nSTDERR:\n{}",
-            output.status.code(),
-            stdout,
-            stderr
+            "El instalador de {} falló con código {:?}\nSTDOUT:\n{}\nSTDERR:\n{}",
+            name, output.status.code(), stdout, stderr
         );
     }
 
-    info!("[forge::install] Instalador de Forge completado con éxito");
-
-    // ── 4. Leer JSONs ─────────────────────────────────────────
-    let forge_json_path = versions_dir
-        .join(format!("{}-forge-{}", mc_version, forge_version))
-        .join(format!("{}-forge-{}.json", mc_version, forge_version));
-
-    debug!("[forge::install] Leyendo forge JSON: {:?}", forge_json_path);
-
-    let forge_json: serde_json::Value = serde_json::from_str(
-        &tokio::fs::read_to_string(&forge_json_path)
+    let json_path = versions_dir.join(&version_id).join(format!("{}.json", version_id));
+    let loader_json: serde_json::Value = serde_json::from_str(
+        &tokio::fs::read_to_string(&json_path)
             .await
-            .context("No se pudo leer el JSON de Forge")?,
+            .with_context(|| format!("No se pudo leer el JSON de {}", name))?,
     )
-    .context("JSON de Forge inválido")?;
+    .with_context(|| format!("JSON de {} inválido", name))?;
 
-    let mc_json: serde_json::Value = serde_json::from_str(
-        &tokio::fs::read_to_string(&mc_json_path)
-            .await
-            .context("No se pudo leer el JSON de Minecraft")?,
-    )
-    .context("JSON de Minecraft inválido")?;
-
-    // ── 5. Libraries de Forge ─────────────────────────────────
-    info!("[forge::install] Descargando libraries de Forge...");
-    progress::sub_range(55, 70);
-    download_libraries(&forge_json, launcher_root, app, "Libraries Forge")
+    progress::sub_range(90, 100);
+    download_libraries(&loader_json, launcher_root, reporter, &format!("Libraries {}", name))
         .await
-        .context("Fallo descargando libraries de Forge")?;
-    info!("[forge::install] Libraries de Forge completadas");
-
-    // ── 6. Libraries de Minecraft ─────────────────────────────
-    info!("[forge::install] Descargando libraries de Minecraft...");
-    progress::sub_range(70, 80);
-    download_libraries(&mc_json, launcher_root, app, "Libraries Minecraft")
-        .await
-        .context("Fallo descargando libraries de Minecraft")?;
-    info!("[forge::install] Libraries de Minecraft completadas");
-
-    // ── 7. Assets de vanilla ──────────────────────────────────
-    info!("[forge::install] Descargando assets...");
-    progress::sub_range(80, 100);
-    download_assets(&mc_json, launcher_root, app)
-        .await
-        .context("Fallo descargando assets")?;
-    info!("[forge::install] Assets completados");
+        .with_context(|| format!("Fallo descargando libraries de {}", name))?;
 
     emit(
-        app,
-        ProgressPayload::Step {
-            step: "Forge instalado con éxito".into(),
-            percent: 100,
-        },
+        reporter,
+        ProgressPayload::Step { step: format!("{} instalado con éxito", name), percent: 100 },
     );
-
-    info!(
-        "[forge::install] ✓ Instalación completada — MC {} | Forge {}",
-        mc_version, forge_version
-    );
+    info!("[{}] ✓ {} instalado", name, version_id);
     Ok(())
 }

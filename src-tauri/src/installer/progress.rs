@@ -67,7 +67,23 @@ pub fn sub_range(from: u8, to: u8) {
     phase.last = phase.last.max(phase.start);
 }
 
-pub fn emit(app: &AppHandle, payload: ProgressPayload) {
+/// Destino de los eventos de progreso. Sin ventana (`none`) el instalador
+/// funciona igual, sin notificar a nadie.
+#[derive(Clone)]
+pub struct Reporter(Option<AppHandle>);
+
+impl Reporter {
+    pub fn new(app: AppHandle) -> Self {
+        Self(Some(app))
+    }
+
+    pub fn none() -> Self {
+        Self(None)
+    }
+}
+
+pub fn emit(reporter: &Reporter, payload: ProgressPayload) {
+    let Some(app) = &reporter.0 else { return };
     let Ok(mut value) = serde_json::to_value(&payload) else { return };
     let local = value["percent"].as_f64().unwrap_or(0.0).clamp(0.0, 100.0);
     let (global, index, count) = {

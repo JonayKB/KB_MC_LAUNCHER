@@ -5,6 +5,8 @@ use oauth2::{
     RedirectUrl, Scope, TokenResponse, TokenUrl,
 };
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex as StdMutex, Mutex};
+use std::time::Duration;
 use tauri::Window;
 use tokio::sync::oneshot;
 use tracing::{info, warn};
@@ -15,6 +17,179 @@ pub struct MicrosoftTokens {
 }
 pub const CLIENT_ID: &str = "85d576e3-a3f9-41da-96f9-afdbe46cefc8";
 
+/// Login en espera: al llegar otro o al cancelar, se abandona y libera el puerto
+static ACTIVE_LOGIN: Mutex<Option<oneshot::Sender<()>>> = Mutex::new(None);
+
+const CALLBACK_ADDR: &str = "127.0.0.1:47821";
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
+/// Mensaje de error que el frontend no muestra: lo ha pedido el propio usuario
+pub const LOGIN_CANCELLED: &str = "LOGIN_CANCELLED";
+
+/// Lo que el navegador trae de vuelta en `/callback`
+enum Callback {
+    Code(String),
+    Denied(String),
+}
+
+pub fn cancel_login() -> bool {
+    match ACTIVE_LOGIN.lock().unwrap().take() {
+        Some(cancel) => cancel.send(()).is_ok(),
+        None => false,
+    }
+}
+
+fn result_page(title: &str, subtitle: &str, detail: &str) -> Html<String> {
+    Html(
+        CALLBACK_PAGE
+            .replace("{{TITLE}}", title)
+            .replace("{{SUBTITLE}}", subtitle)
+            .replace("{{DETAIL}}", detail),
+    )
+}
+
+/// Tras abandonar un login anterior el puerto tarda unos instantes en liberarse
+async fn bind_callback() -> Result<tokio::net::TcpListener> {
+    let mut attempt = 0;
+    loop {
+        match tokio::net::TcpListener::bind(CALLBACK_ADDR).await {
+            Ok(listener) => return Ok(listener),
+            Err(_) if attempt < 20 => {
+                attempt += 1;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(e) => {
+                return Err(e).context(format!(
+                    "El puerto {} está ocupado por otro programa",
+                    CALLBACK_ADDR
+                ));
+            }
+        }
+    }
+}
+
+/// Levanta `/callback`, abre el navegador y espera a que Microsoft redirija.
+/// Una petición sin el `state` esperado se rechaza sin interrumpir el login.
+async fn wait_for_code(
+    expected_state: String,
+    open_browser: impl FnOnce() -> Result<()>,
+    timeout: Duration,
+) -> Result<String> {
+    // Solo un login a la vez: el anterior se abandona
+    cancel_login();
+    let listener = bind_callback().await?;
+
+    let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+    *ACTIVE_LOGIN.lock().unwrap() = Some(cancel_tx);
+
+    let (tx, rx) = oneshot::channel::<Callback>();
+    let tx = Arc::new(StdMutex::new(Some(tx)));
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let shutdown_tx = Arc::new(StdMutex::new(Some(shutdown_tx)));
+
+    let app = Router::new().route(
+        "/callback",
+        get(move |Query(params): Query<HashMap<String, String>>| {
+            let tx = tx.clone();
+            let shutdown_tx = shutdown_tx.clone();
+            let expected_state = expected_state.clone();
+            async move {
+                if params.get("state") != Some(&expected_state) {
+                    warn!("[microsoft] Callback con state incorrecto, se ignora");
+                    return result_page(
+                        "Petición no válida",
+                        "No se ha iniciado sesión.",
+                        "Esta página no procede del inicio de sesión del launcher.",
+                    );
+                }
+
+                let (message, page) = match (params.get("code"), params.get("error")) {
+                    (Some(code), _) => (
+                        Callback::Code(code.clone()),
+                        result_page(
+                            "Login Completado",
+                            "Sesión iniciada correctamente.",
+                            "La autenticación ha finalizado con éxito. Ya puedes cerrar esta ventana de forma segura para volver a la aplicación.",
+                        ),
+                    ),
+                    (None, error) => (
+                        Callback::Denied(
+                            params
+                                .get("error_description")
+                                .or(error)
+                                .cloned()
+                                .unwrap_or_else(|| "respuesta desconocida".to_string()),
+                        ),
+                        result_page(
+                            "Login Cancelado",
+                            "No se ha iniciado sesión.",
+                            "Puedes cerrar esta ventana y volver a intentarlo desde el launcher.",
+                        ),
+                    ),
+                };
+
+                if let Some(sender) = tx.lock().unwrap().take() {
+                    let _ = sender.send(message);
+                }
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    if let Some(s) = shutdown_tx.lock().unwrap().take() {
+                        let _ = s.send(());
+                    }
+                });
+                page
+            }
+        }),
+    );
+
+    let mut server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+                info!("[microsoft] Servidor de callback cerrado");
+            })
+            .await
+            .ok();
+    });
+
+    let mut answered = false;
+    let outcome = async {
+        open_browser()?;
+        tokio::select! {
+            callback = rx => {
+                answered = true;
+                match callback {
+                    Ok(Callback::Code(code)) => Ok(code),
+                    Ok(Callback::Denied(reason)) => {
+                        info!("[microsoft] Login rechazado: {}", reason);
+                        anyhow::bail!("Microsoft no completó el inicio de sesión: {}", reason)
+                    }
+                    Err(_) => anyhow::bail!("Error recibiendo código"),
+                }
+            }
+            _ = cancel_rx => anyhow::bail!(LOGIN_CANCELLED),
+            _ = tokio::time::sleep(timeout) => anyhow::bail!("Login timeout — no se completó en 5 minutos"),
+        }
+    }
+    .await;
+
+    // Con respuesta, dejar que la página llegue al navegador; después, en
+    // cualquier caso, esperar a que el puerto quede libre
+    let closed = answered
+        && tokio::time::timeout(Duration::from_secs(1), &mut server).await.is_ok();
+    if !closed {
+        server.abort();
+        let _ = server.await;
+    }
+
+    // Solo si sigue siendo el activo: uno nuevo pudo sustituirlo
+    if let Ok(mut active) = ACTIVE_LOGIN.lock() {
+        if active.as_ref().is_some_and(|cancel| cancel.is_closed()) {
+            *active = None;
+        }
+    }
+    outcome
+}
+
 pub async fn login(window: Window) -> Result<MicrosoftTokens> {
     let client = BasicClient::new(ClientId::new(CLIENT_ID.to_string()))
         .set_auth_uri(AuthUrl::new(
@@ -23,49 +198,64 @@ pub async fn login(window: Window) -> Result<MicrosoftTokens> {
         .set_token_uri(TokenUrl::new(
             "https://login.microsoftonline.com/consumers/oauth2/v2.0/token".to_string(),
         )?)
-        .set_redirect_uri(RedirectUrl::new(
-            "http://127.0.0.1:47821/callback".to_string(),
-        )?);
+        .set_redirect_uri(RedirectUrl::new(format!("http://{}/callback", CALLBACK_ADDR))?);
 
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
 
-    let (auth_url, _) = client
+    let (auth_url, state) = client
         .authorize_url(CsrfToken::new_random)
         .add_scope(Scope::new("XboxLive.signin".into()))
         .add_scope(Scope::new("offline_access".into()))
         .set_pkce_challenge(challenge)
         .url();
 
-    let (tx, rx) = oneshot::channel::<String>();
+    let code = wait_for_code(
+        state.secret().clone(),
+        || open::that(auth_url.as_str()).map_err(Into::into),
+        LOGIN_TIMEOUT,
+    )
+    .await?;
 
-    let tx = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
-    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    let shutdown_tx = std::sync::Arc::new(std::sync::Mutex::new(Some(shutdown_tx)));
+    // oauth2 pide un cliente sin redirecciones para el intercambio de tokens
+    let http_client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(30))
+        .build()?;
 
-    let app = Router::new().route(
-        "/callback",
-        get(move |Query(params): Query<HashMap<String, String>>| {
-            let tx = tx.clone();
-            let shutdown_tx = shutdown_tx.clone();
-            async move {
-                if let Some(code) = params.get("code") {
-                    if let Some(sender) = tx.lock().unwrap().take() {
-                        let _ = sender.send(code.clone());
-                    }
-                }
-                tokio::spawn(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    if let Some(s) = shutdown_tx.lock().unwrap().take() {
-                        let _ = s.send(());
-                    }
-                });
-Html(r#"
+    let token = client
+        .exchange_code(AuthorizationCode::new(code))
+        .set_pkce_verifier(verifier)
+        .request_async(&http_client)
+        .await
+        .context("Error obteniendo token Microsoft")?;
+
+    let access_token = token.access_token().secret().to_string();
+    let refresh_token = token
+        .refresh_token()
+        .map(|t| t.secret().to_string())
+        .context(
+            "Microsoft no devolvió refresh_token — asegúrate de tener el scope offline_access",
+        )?;
+
+    info!("[microsoft] ✓ access_token y refresh_token obtenidos");
+
+    if let Err(e) = window.set_focus() {
+        warn!("[tauri] No se pudo enfocar la ventana: {:?}", e);
+    }
+
+    Ok(MicrosoftTokens {
+        access_token,
+        refresh_token,
+    })
+}
+
+const CALLBACK_PAGE: &str = r#"
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Autenticación Completada</title>
+    <title>{{TITLE}}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@700;800&display=swap" rel="stylesheet">
@@ -275,8 +465,8 @@ Html(r#"
                     <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
             </div>
-            <h1 class="title">Login Completado</h1>
-            <p class="subtitle">Sesión iniciada correctamente.</p>
+            <h1 class="title">{{TITLE}}</h1>
+            <p class="subtitle">{{SUBTITLE}}</p>
         </div>
 
         <div class="progress-track">
@@ -284,7 +474,7 @@ Html(r#"
         </div>
 
         <div class="status-box">
-            La autenticación ha finalizado con éxito. Ya puedes cerrar esta ventana de forma segura para volver a la aplicación.
+            {{DETAIL}}
         </div>
 
         <button class="btn-primary" onclick="window.close()">
@@ -302,66 +492,7 @@ Html(r#"
     </script>
 </body>
 </html>
-"#)
-            }
-        }),
-    );
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:47821").await?;
-
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async {
-                let _ = shutdown_rx.await;
-                info!("[microsoft] Servidor de callback cerrado");
-            })
-            .await
-            .ok();
-    });
-
-    if let Err(e) = open::that(auth_url.as_str()) {
-        server.abort();
-        return Err(e.into());
-    }
-
-    let code = tokio::time::timeout(tokio::time::Duration::from_secs(300), rx).await;
-    // El cierre ordenado solo ocurre al recibir el callback: si se agota el
-    // tiempo hay que liberar el puerto para permitir otro inicio de sesión
-    if code.is_err() {
-        server.abort();
-    }
-    let code = code
-        .context("Login timeout — no se completó en 5 minutos")?
-        .context("Error recibiendo código")?;
-
-    let http_client = reqwest::Client::new();
-
-    let token = client
-        .exchange_code(AuthorizationCode::new(code))
-        .set_pkce_verifier(verifier)
-        .request_async(&http_client)
-        .await
-        .context("Error obteniendo token Microsoft")?;
-
-    let access_token = token.access_token().secret().to_string();
-    let refresh_token = token
-        .refresh_token()
-        .map(|t| t.secret().to_string())
-        .context(
-            "Microsoft no devolvió refresh_token — asegúrate de tener el scope offline_access",
-        )?;
-
-    info!("[microsoft] ✓ access_token y refresh_token obtenidos");
-
-    if let Err(e) = window.set_focus() {
-        warn!("[tauri] No se pudo enfocar la ventana: {:?}", e);
-    }
-
-    Ok(MicrosoftTokens {
-        access_token,
-        refresh_token,
-    })
-}
+"#;
 
 pub async fn refresh_ms_token(
     client: &reqwest::Client,
@@ -371,6 +502,7 @@ pub async fn refresh_ms_token(
 
     let resp = client
         .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+        .timeout(Duration::from_secs(30))
         .form(&[
             ("client_id", CLIENT_ID),
             ("grant_type", "refresh_token"),
@@ -406,4 +538,105 @@ pub async fn refresh_ms_token(
         access_token,
         refresh_token,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::Mutex as AsyncMutex;
+
+    /// El puerto de callback es fijo: estas pruebas no pueden solaparse
+    static PORT: AsyncMutex<()> = AsyncMutex::const_new(());
+
+    fn callback_url(query: &str) -> String {
+        format!("http://{}/callback?{}", CALLBACK_ADDR, query)
+    }
+
+    async fn page(query: &str) -> String {
+        reqwest::get(callback_url(query)).await.unwrap().text().await.unwrap()
+    }
+
+    fn start(state: &str) -> tokio::task::JoinHandle<Result<String>> {
+        let state = state.to_string();
+        tokio::spawn(wait_for_code(state, || Ok(()), Duration::from_secs(5)))
+    }
+
+    /// Espera a que el servidor de callback esté escuchando
+    async fn wait_listening() {
+        for _ in 0..100 {
+            if tokio::net::TcpStream::connect(CALLBACK_ADDR).await.is_ok() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("el servidor de callback no arrancó");
+    }
+
+    #[tokio::test]
+    async fn code_with_the_right_state_completes_the_login() {
+        let _port = PORT.lock().await;
+        let login = start("abc");
+        wait_listening().await;
+        assert!(page("code=c1&state=abc").await.contains("Login Completado"));
+        assert_eq!(login.await.unwrap().unwrap(), "c1");
+    }
+
+    #[tokio::test]
+    async fn cancelling_in_the_browser_is_not_reported_as_success() {
+        let _port = PORT.lock().await;
+        let login = start("abc");
+        wait_listening().await;
+        let body = page("error=access_denied&error_description=denegado&state=abc").await;
+        assert!(body.contains("Login Cancelado") && !body.contains("Login Completado"));
+        let error = login.await.unwrap().unwrap_err().to_string();
+        assert!(error.contains("denegado"), "{}", error);
+    }
+
+    #[tokio::test]
+    async fn wrong_state_is_rejected_and_the_login_keeps_waiting() {
+        let _port = PORT.lock().await;
+        let login = start("abc");
+        wait_listening().await;
+        let body = page("code=malo&state=otro").await;
+        assert!(body.contains("Petición no válida"));
+        assert!(page("code=malo").await.contains("Petición no válida"));
+        assert!(page("code=bueno&state=abc").await.contains("Login Completado"));
+        assert_eq!(login.await.unwrap().unwrap(), "bueno");
+    }
+
+    #[tokio::test]
+    async fn cancel_frees_the_port_for_a_new_login() {
+        let _port = PORT.lock().await;
+        for round in 0..3 {
+            let login = start("abc");
+            wait_listening().await;
+            assert!(cancel_login());
+            assert_eq!(login.await.unwrap().unwrap_err().to_string(), LOGIN_CANCELLED);
+            let again = start("xyz");
+            wait_listening().await;
+            assert!(page(&format!("code=r{round}&state=xyz")).await.contains("Login Completado"));
+            assert_eq!(again.await.unwrap().unwrap(), format!("r{round}"));
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_second_login_replaces_the_first() {
+        let _port = PORT.lock().await;
+        let first = start("uno");
+        wait_listening().await;
+        let second = start("dos");
+        assert_eq!(first.await.unwrap().unwrap_err().to_string(), LOGIN_CANCELLED);
+        wait_listening().await;
+        assert!(page("code=c&state=dos").await.contains("Login Completado"));
+        assert_eq!(second.await.unwrap().unwrap(), "c");
+    }
+
+    #[tokio::test]
+    async fn failing_to_open_the_browser_frees_the_port() {
+        let _port = PORT.lock().await;
+        let result = wait_for_code("a".into(), || anyhow::bail!("sin navegador"), Duration::from_secs(5)).await;
+        assert!(result.unwrap_err().to_string().contains("sin navegador"));
+        tokio::net::TcpListener::bind(CALLBACK_ADDR).await.unwrap();
+    }
 }

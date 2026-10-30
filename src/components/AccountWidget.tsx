@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { Account, accountFromLogin } from '../types/account';
+import { Account, accountFromLogin, isLoginCancelled } from '../types/account';
 import { useUser } from '../context/UserContext';
 import { widget as s } from '../styles/accountWidgetStyles';
 import { LoginCompleteResponse } from '../types/setup';
@@ -55,7 +55,7 @@ function AddAccountModal({
             onAdded(accountFromLogin(result));
         } catch (err) {
             console.error('[AddAccount] Error login Microsoft:', err);
-            setLoginError(`Error al iniciar sesión: ${err}`);
+            setLoginError(isLoginCancelled(err) ? null : `Error al iniciar sesión: ${err}`);
             setStep('choose');
         } finally {
             setLoading(false);
@@ -170,16 +170,23 @@ function AddAccountModal({
 
                     {/* ── Microsoft loading ── */}
                     {step === 'microsoft' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 0', color: 'var(--text-faint)', fontSize: '13px' }}>
-                            {loading ? (
-                                <>
-                                    <div style={s.spinner} />
-                                    Esperando login en el navegador...
-                                </>
-                            ) : (
-                                <span>Completando login...</span>
+                        <>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 0', color: 'var(--text-faint)', fontSize: '13px' }}>
+                                {loading ? (
+                                    <>
+                                        <div style={s.spinner} />
+                                        Esperando login en el navegador...
+                                    </>
+                                ) : (
+                                    <span>Completando login...</span>
+                                )}
+                            </div>
+                            {loading && (
+                                <button style={s.primaryBtn(btnHovered)} onClick={() => invoke('cancel_login')}>
+                                    Cancelar
+                                </button>
                             )}
-                        </div>
+                        </>
                     )}
 
                     {/* ── Offline ── */}

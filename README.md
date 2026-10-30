@@ -4,13 +4,16 @@ A custom Minecraft modpack launcher built with **Tauri v2**, a **Rust** backend 
 
 ## Features
 
-- **Microsoft Authentication** – Full login flow via Microsoft OAuth2 / Device Code Flow (Xbox Live → XSTS → Minecraft Services), including player skin/head extraction.
-- **Full Minecraft Installer** – Downloads and installs vanilla Minecraft plus modded loaders:
+- **Accounts** – Microsoft login in the browser (OAuth2 with PKCE → Xbox Live → XSTS → Minecraft Services), including player skin/head extraction, or offline accounts that need no Microsoft account.
+- **Full Minecraft Installer** – Downloads and runs vanilla Minecraft and modded loaders:
+  - Vanilla
   - Forge
   - NeoForge
   - Fabric
-- **Parallel asset & library downloading** for fast installs, with real-time progress reporting to the UI.
-- **Automatic Java detection & installation**, matched to the required runtime for each Minecraft version.
+- **Parallel asset & library downloading** for fast installs, with real-time progress reporting to the UI. Large files resume after a dropped connection.
+- **Safe updates** – New mods and overrides are prepared aside and only replace the installed ones once everything is ready, so a failed or cancelled update leaves the modpack playable.
+- **Automatic Java installation** – The version each Minecraft asks for in its Mojang metadata (8, 17, 21, 25...) is downloaded from Eclipse Temurin and checked against its SHA-256.
+- **Encrypted session storage** – Microsoft and Minecraft tokens are stored in an encrypted file whose key lives in the system keyring.
 - **JVM auto-tuning** – memory allocation and JVM flags calculated automatically based on the system's available RAM/hardware.
 - **Modpack management** – install, configure, and launch modpacks from a modpack detail screen, with per-modpack settings.
 - **Polished desktop UI**:
@@ -27,7 +30,6 @@ A custom Minecraft modpack launcher built with **Tauri v2**, a **Rust** backend 
 **Frontend**
 - React 19 + TypeScript
 - React Router
-- React Hook Form + Zod (validation)
 - Vite
 
 **Backend / Native**
@@ -35,9 +37,10 @@ A custom Minecraft modpack launcher built with **Tauri v2**, a **Rust** backend 
 - Tokio (async runtime)
 - Reqwest (HTTP client) + Axum (local OAuth callback server)
 - Serde / serde_json
-- `zip` / `jszip` for archive extraction
+- `zip` for archive extraction
 - `image` for skin/icon processing
 - `oauth2` crate for the Microsoft auth flow
+- `keyring` + `aes-gcm` for token storage
 
 ## Project Structure
 
@@ -57,6 +60,8 @@ KB_MC_LAUNCHER/
 │   │   ├── installer/          # Download, extraction, requirements, sysinfo
 │   │   │   └── loaders/          # Vanilla, Forge, NeoForge, Fabric installers
 │   │   ├── launcher.rs           # Game launch logic
+│   │   ├── secrets.rs            # Encrypted token storage
+│   │   ├── e2e_tests.rs          # Real install-and-play tests
 │   │   └── commands.rs            # Tauri commands exposed to the frontend
 │   └── tauri.conf.json
 ├── .github/workflows/         # CI/CD (automated release pipeline)
@@ -94,7 +99,25 @@ npm run tauri build
 just package
 ```
 
+### Tests
+
+```bash
+npm run type-check
+cd src-tauri && cargo test --lib
+```
+
+The real tests install each Minecraft/loader combination from Mojang, Fabric, Forge and NeoForge and start the game with the same command a player gets. They need network access, several GB of disk and an X server (`Xvfb` works):
+
+```bash
+cd src-tauri
+KB_E2E_DIR=/path/with/space DISPLAY=:99 cargo test --lib e2e -- --ignored --nocapture --test-threads=1
+```
+
+`KB_E2E_CASES=vanilla-26.3,forge-1.20.1` limits the run to those cases.
+
 ## Modpack format
+
+Supported versions: Minecraft 1.12.2 and later (including the `26.x` numbering). On Linux, versions before 1.13 need `xrandr` installed.
 
 Each modpack publishes a `latest.json` at `https://me.jonaykb.com/modpacks/<id>/latest.json`:
 
@@ -131,7 +154,9 @@ The modpack list lives in `index.json`. An entry can set `release_date` (ISO 860
 
 This check runs on the player's clock, so it is a display gate only: don't upload the mods/overrides files until the release date if they must stay private.
 
-`loader` can be `forge` (default) or `fabric`. Older files that only set `forgeVersion` keep working as Forge. When `version` changes, installed players get an **Update** button; updating replaces the whole `mods/` folder.
+`loader` can be `forge` (default), `neoforge`, `fabric` or `vanilla`. `loaderVersion` is required except for `vanilla`. Older files that only set `forgeVersion` keep working as Forge.
+
+When `version` changes, installed players get an **Update** button. Updating downloads both files first, then replaces the whole `mods/` folder and copies the overrides over the instance. It does not change Minecraft or the loader: a new `minecraftVersion` or `loaderVersion` needs a reinstall.
 
 ## Releases
 

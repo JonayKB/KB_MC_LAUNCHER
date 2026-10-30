@@ -39,9 +39,17 @@ open = "5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
+tauri-plugin-single-instance = "2"
+aes-gcm = "0.10"
+sha2 = "0.10"
+keyring = { version = "3", default-features = false, features = ["windows-native", "apple-native", "async-secret-service", "tokio", "crypto-rust"] }
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
+
+[dev-dependencies]
+sha1 = "0.10"
+tempfile = "3"

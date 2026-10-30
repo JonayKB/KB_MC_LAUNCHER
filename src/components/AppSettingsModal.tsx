@@ -70,11 +70,12 @@ export default function AppSettingsModal({ onClose }: Props) {
 
         setClearing(true);
         try {
-            // 1. Borrar localStorage
-            localStorage.clear();
-
-            // 2. Borrar instancias y versiones en Rust
+            // 1. Borrar instancias, versiones y tokens en Rust. Va primero: si no se
+            // puede (p. ej. hay una partida abierta), las cuentas no se pierden
             await invoke('clear_all_cache');
+
+            // 2. Borrar localStorage
+            localStorage.clear();
 
             await message(
                 'Caché borrado correctamente. La aplicación se reiniciará.',

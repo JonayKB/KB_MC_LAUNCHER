@@ -41,14 +41,7 @@ pub async fn fetch_text(url: String) -> Result<String, String> {
     if !ALLOWED_FETCH_PREFIXES.iter().any(|p| url.starts_with(p)) {
         return Err(format!("URL no permitida: {}", url));
     }
-    reqwest::get(&url)
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
-        .text()
-        .await
-        .map_err(|e| e.to_string())
+    installer::http::get_text(&url).await.map_err(|e| format!("{:#}", e))
 }
 
 #[tauri::command]
@@ -70,8 +63,30 @@ pub struct InstallState(pub Mutex<Option<tokio::task::AbortHandle>>);
 /// Error que recibe el frontend cuando el usuario cancela la instalación
 const INSTALL_CANCELLED: &str = "CANCELLED";
 
+/// Comprueba que nada esté usando los archivos antes de cambiarlos o borrarlos
+fn ensure_not_running(app: &AppHandle, modpack_id: Option<&str>) -> Result<(), String> {
+    let processes = app.state::<RunningInstances>();
+    let processes = processes.processes.lock().unwrap();
+    let running = match modpack_id {
+        Some(id) => processes.contains_key(id),
+        None => !processes.is_empty(),
+    };
+    if running {
+        return Err("Cierra el juego antes de continuar".to_string());
+    }
+    Ok(())
+}
+
+fn ensure_no_install(app: &AppHandle) -> Result<(), String> {
+    if app.state::<InstallState>().0.lock().unwrap().is_some() {
+        return Err("Ya hay una instalación en curso".to_string());
+    }
+    Ok(())
+}
+
 /// Ejecuta una instalación/actualización registrándola para poder cancelarla.
-/// Si no termina bien y la instancia no existía antes, se borra lo descargado.
+/// Si no termina bien, una instancia nueva se borra entera; una existente sigue
+/// como estaba, porque lo nuevo se prepara aparte (ver `installer::apply_content`).
 async fn run_cancellable_install<F>(
     app: &AppHandle,
     base_path: &str,
@@ -81,14 +96,9 @@ async fn run_cancellable_install<F>(
 where
     F: Future<Output = anyhow::Result<()>> + Send + 'static,
 {
+    ensure_not_running(app, Some(modpack_id))?;
     let instance_dir = Path::new(base_path).join("instances").join(modpack_id);
     let existed = instance_dir.exists();
-    if existed {
-        // Marca la instancia como incompleta hasta que termine bien
-        tokio::fs::write(instance_dir.join(installer::INSTALLED_VERSION_FILE), "")
-            .await
-            .map_err(|e| e.to_string())?;
-    }
 
     let handle = {
         let state = app.state::<InstallState>();
@@ -102,21 +112,29 @@ where
     };
 
     let result = handle.await;
-    *app.state::<InstallState>().0.lock().unwrap() = None;
 
     let error = match result {
-        Ok(Ok(())) => return Ok(()),
-        Ok(Err(e)) => e.to_string(),
-        Err(e) if e.is_cancelled() => INSTALL_CANCELLED.to_string(),
-        Err(e) => e.to_string(),
+        Ok(Ok(())) => None,
+        Ok(Err(e)) => Some(format!("{:#}", e)),
+        Err(e) if e.is_cancelled() => Some(INSTALL_CANCELLED.to_string()),
+        Err(e) => Some(e.to_string()),
     };
 
-    warn!("[commands::install] {} no se completó: {}", modpack_id, error);
-    // Una instalación nueva a medias no debe parecer instalada
-    if !existed {
-        tokio::fs::remove_dir_all(&instance_dir).await.ok();
+    if let Some(error) = &error {
+        warn!("[commands::install] {} no se completó: {}", modpack_id, error);
+        // Cancelar no detiene los hilos de disco: limpiar cuando hayan parado
+        installer::extract::wait_idle().await;
+        if existed {
+            tokio::fs::remove_dir_all(instance_dir.join(installer::STAGING_DIR)).await.ok();
+        } else {
+            // Una instalación nueva a medias no debe parecer instalada
+            tokio::fs::remove_dir_all(&instance_dir).await.ok();
+        }
     }
-    Err(error)
+
+    // Hasta aquí no se admite otra instalación: comparten archivos
+    *app.state::<InstallState>().0.lock().unwrap() = None;
+    error.map_or(Ok(()), Err)
 }
 
 #[tauri::command]
@@ -169,7 +187,7 @@ pub async fn update_modpack(
 
 #[tauri::command]
 pub fn cancel_install(state: State<'_, InstallState>) -> bool {
-    match state.0.lock().unwrap().take() {
+    match state.0.lock().unwrap().as_ref() {
         Some(handle) => {
             handle.abort();
             true
@@ -234,16 +252,15 @@ pub async fn launch_modpack(
 ) -> Result<(), String> {
     validate_modpack_id(&modpack_id)?;
 
-    // El launcher registra el proceso en RunningInstances y emite
-    // game_started/game_exited; aquí solo se evita el doble lanzamiento
-    if app
-        .state::<RunningInstances>()
-        .processes
-        .lock()
-        .unwrap()
-        .contains_key(&modpack_id)
+    // El launcher sustituye esta reserva por el PID real y emite
+    // game_started/game_exited; aquí se evita el doble lanzamiento
     {
-        return Err("Este modpack ya se está ejecutando".to_string());
+        let state = app.state::<RunningInstances>();
+        let mut processes = state.processes.lock().unwrap();
+        if processes.contains_key(&modpack_id) {
+            return Err("Este modpack ya se está ejecutando".to_string());
+        }
+        processes.insert(modpack_id.clone(), 0);
     }
 
     let settings = LaunchSettings {
@@ -255,7 +272,7 @@ pub async fn launch_modpack(
         extra_jvm_args: extra_jvm_args.unwrap_or_default(),
     };
 
-    launch(
+    let launched = launch(
         app.clone(),
         base_path,
         modpack_id.clone(),
@@ -266,8 +283,12 @@ pub async fn launch_modpack(
         LaunchAuth::new(username, uuid, access_token),
         settings,
     )
-    .await
-    .map_err(|e| e.to_string())?;
+    .await;
+
+    if let Err(e) = launched {
+        app.state::<RunningInstances>().processes.lock().unwrap().remove(&modpack_id);
+        return Err(format!("{:#}", e));
+    }
 
     if show_logs.unwrap_or(true) {
         // No poder abrir la ventana de logs no debe impedir jugar
@@ -331,8 +352,10 @@ pub async fn open_directory(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn uninstall_modpack(base_path: String, modpack_id: String) -> Result<(), String> {
+pub async fn uninstall_modpack(app: AppHandle, base_path: String, modpack_id: String) -> Result<(), String> {
     validate_modpack_id(&modpack_id)?;
+    ensure_not_running(&app, Some(&modpack_id))?;
+    ensure_no_install(&app)?;
     info!(
         "[commands::uninstall_modpack] Desinstalando: {}",
         modpack_id
@@ -369,6 +392,8 @@ pub async fn uninstall_modpack(base_path: String, modpack_id: String) -> Result<
 #[tauri::command]
 pub async fn clear_all_cache(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
+    ensure_not_running(&app, None)?;
+    ensure_no_install(&app)?;
     let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
 
     info!("[commands::clear_all_cache] Borrando: {:?}", base);
@@ -382,6 +407,10 @@ pub async fn clear_all_cache(app: tauri::AppHandle) -> Result<(), String> {
             info!("[commands::clear_all_cache] Eliminado: {:?}", path);
         }
     }
+    // Sin el almacén del sistema disponible no hay nada que impida seguir borrando
+    if let Err(e) = crate::secrets::clear(&app).await {
+        warn!("[commands::clear_all_cache] Tokens: {}", e);
+    }
     Ok(())
 }
 
@@ -392,15 +421,15 @@ pub async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn auth_microsoft(window: Window) -> Result<LoginCompleteResponse, String> {
-    let ms_tokens = microsoft::login(window).await.map_err(|e| e.to_string())?;
+    let ms_tokens = microsoft::login(window).await.map_err(|e| format!("{:#}", e))?;
 
-    let client = reqwest::Client::new();
+    let client = installer::http::client();
 
-    let xbox = xbox::authenticate(&client, &ms_tokens.access_token)
+    let xbox = xbox::authenticate(client, &ms_tokens.access_token)
         .await
         .map_err(|e| e.to_string())?;
 
-    let profile = minecraft::authenticate(&client, &xbox)
+    let profile = minecraft::authenticate(client, &xbox)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -424,20 +453,26 @@ pub async fn auth_microsoft(window: Window) -> Result<LoginCompleteResponse, Str
     })
 }
 
+/// Deja de esperar el login en curso. Devuelve false si no había ninguno.
+#[tauri::command]
+pub fn cancel_login() -> bool {
+    microsoft::cancel_login()
+}
+
 #[tauri::command]
 pub async fn auth_refresh(refresh_token: String) -> Result<LoginCompleteResponse, String> {
     info!("[commands::auth_refresh] Renovando sesión...");
-    let client = reqwest::Client::new();
+    let client = installer::http::client();
 
-    let ms_tokens = crate::auth::microsoft::refresh_ms_token(&client, &refresh_token)
+    let ms_tokens = crate::auth::microsoft::refresh_ms_token(client, &refresh_token)
         .await
         .map_err(|e| e.to_string())?;
 
-    let xbox = crate::auth::xbox::authenticate(&client, &ms_tokens.access_token)
+    let xbox = crate::auth::xbox::authenticate(client, &ms_tokens.access_token)
         .await
         .map_err(|e| e.to_string())?;
 
-    let profile = crate::auth::minecraft::authenticate(&client, &xbox)
+    let profile = crate::auth::minecraft::authenticate(client, &xbox)
         .await
         .map_err(|e| e.to_string())?;
 
