@@ -8,6 +8,9 @@ mod auth;
 mod logging;
 mod game_logs;
 mod process_ext;
+mod secrets;
+#[cfg(test)]
+mod e2e_tests;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -17,9 +20,21 @@ pub struct RunningInstances {
     pub processes: Mutex<HashMap<String, u32>>, // modpack_id -> pid
 }
 
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Debe ser el primer plugin: un segundo launcher sale antes de hacer nada
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_process::init())
         .manage(commands::InstallState::default())
         .manage(game_logs::GameLogs::default())
@@ -36,12 +51,7 @@ pub fn run() {
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "open" => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
-                    }
+                    "open" => show_main_window(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -52,11 +62,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        let app = tray.app_handle();
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
+                        show_main_window(tray.app_handle());
                     }
                 })
                 .build(app)?;
@@ -93,6 +99,9 @@ pub fn run() {
             commands::is_modpack_running,
             commands::get_installed_version,
             commands::cancel_install,
+            commands::cancel_login,
+            secrets::tokens_load,
+            secrets::tokens_save,
             game_logs::get_game_logs,
             game_logs::open_game_logs,
             game_logs::kill_game,

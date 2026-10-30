@@ -14,7 +14,7 @@ export interface ModpackIndex {
     modpacks: ModpackEntry[];
 }
 
-export type ModLoader = 'forge' | 'fabric';
+export type ModLoader = 'forge' | 'neoforge' | 'fabric' | 'vanilla';
 
 export interface ModpackVersion {
     id: string;
@@ -22,7 +22,7 @@ export interface ModpackVersion {
     version: string;
     /** Por defecto "forge" (modpacks antiguos no lo indican) */
     loader?: ModLoader;
-    /** Versión del loader: "0.16.10" para Fabric, "47.4.10" para Forge */
+    /** Versión del loader: "0.16.10" para Fabric, "47.4.10" para Forge, "21.1.265" para NeoForge; sin usar en Vanilla */
     loaderVersion?: string;
     /** @deprecated usar loaderVersion; se mantiene para los latest.json antiguos */
     forgeVersion?: string;
@@ -35,7 +35,9 @@ export interface ModpackVersion {
 
 export const LOADER_LABELS: Record<ModLoader, string> = {
     forge: 'Forge',
+    neoforge: 'NeoForge',
     fabric: 'Fabric',
+    vanilla: 'Vanilla',
 };
 
 /** Loader y versión efectivos, compatibles con el formato antiguo (solo forgeVersion) */

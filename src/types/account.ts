@@ -17,6 +17,46 @@ export interface Account {
 
 export const AUTH_VERSION = 2;
 
+/** Error de auth_microsoft cuando el propio usuario cancela (ver microsoft.rs) */
+export const LOGIN_CANCELLED = 'LOGIN_CANCELLED';
+
+export function isLoginCancelled(err: unknown): boolean {
+    return String(err).includes(LOGIN_CANCELLED);
+}
+
+/** Tokens de una cuenta en el archivo cifrado (ver secrets.rs) */
+export interface AccountTokens {
+    accessToken?: string;
+    refreshToken?: string;
+}
+
+export type TokenVault = Record<string, AccountTokens>;
+
+/** Separa lo que va al archivo cifrado de lo que puede quedarse en localStorage */
+export function splitTokens(accounts: Account[]): { stored: Account[]; vault: TokenVault } {
+    const vault: TokenVault = {};
+    const stored = accounts.map(account => {
+        if (!account.isOnline || !account.uuid) return account;
+        const { accessToken, refreshToken, ...rest } = account;
+        vault[account.uuid] = { accessToken, refreshToken };
+        return rest;
+    });
+    return { stored, vault };
+}
+
+/** Lo que aún esté en localStorage (versiones anteriores) tiene prioridad: es lo más reciente */
+export function mergeTokens(accounts: Account[], vault: TokenVault): Account[] {
+    return accounts.map(account => {
+        const saved = account.uuid ? vault[account.uuid] : undefined;
+        if (!account.isOnline || !saved) return account;
+        return {
+            ...account,
+            accessToken: account.accessToken ?? saved.accessToken,
+            refreshToken: account.refreshToken ?? saved.refreshToken,
+        };
+    });
+}
+
 export function accountFromLogin(result: LoginCompleteResponse, isActual = true): Account {
     return {
         isOnline: true,

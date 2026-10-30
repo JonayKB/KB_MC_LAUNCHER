@@ -1,54 +1,34 @@
-use crate::installer::download;
-use crate::installer::progress::{self, emit, ProgressPayload};
-use crate::installer::requirements::{
-    check_java_by_minecraft_version, install_java_by_minecraft_version,
-};
+use crate::installer::progress::{self, emit, ProgressPayload, Reporter};
+use crate::installer::requirements::{ensure_java, required_java_major};
+use crate::installer::rules::{library_files, maven_relative_path};
+use crate::installer::{download, http};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
 use tracing::{error, info};
 
 const VERSION_MANIFEST: &str =
     "https://launchermeta.mojang.com/mc/game/version_manifest.json";
 
-pub async fn install(
-    app: &AppHandle,
-    versions_dir: &Path,
-    _instance_dir: &Path,
-    mc_version: &str,
-) -> Result<()> {
-    prepare(app, versions_dir, mc_version).await?;
-    emit(app, ProgressPayload::Step { step: "Minecraft instalado".into(), percent: 100 });
+pub async fn install(reporter: &Reporter, versions_dir: &Path, mc_version: &str) -> Result<()> {
+    prepare(reporter, versions_dir, mc_version, (0, 100)).await?;
+    emit(reporter, ProgressPayload::Step { step: "Minecraft instalado".into(), percent: 100 });
     Ok(())
 }
 
-/// Deja listo Minecraft vanilla: Java, JSON, jar, libraries y assets.
-/// Lo usan los loaders que no traen su propio instalador (Fabric, vanilla).
-pub async fn prepare(app: &AppHandle, versions_dir: &Path, mc_version: &str) -> Result<serde_json::Value> {
-    let launcher_root = versions_dir
-        .parent()
-        .context("No se pudo determinar la raíz del launcher")?;
+/// Lo que ya tiene Minecraft vanilla descargado: su JSON y el Java que necesita
+pub struct PreparedMinecraft {
+    pub mc_json: serde_json::Value,
+    pub java_bin: PathBuf,
+}
 
-    // ── Java ──────────────────────────────────────────────────
-    // Tramos del paso (fabric usa hasta el 90% y deja el resto para sus libraries)
-    progress::sub_range(0, 5);
-    emit(app, ProgressPayload::Step { step: "Comprobando Java...".into(), percent: 5 });
-    if !check_java_by_minecraft_version(mc_version, launcher_root).await {
-        install_java_by_minecraft_version(mc_version, launcher_root).await?;
-    }
-
-    // ── JSON de la versión ────────────────────────────────────
+/// JSON de la versión de Minecraft, descargándolo si aún no está
+async fn version_json(versions_dir: &Path, mc_version: &str) -> Result<serde_json::Value> {
     let version_dir = versions_dir.join(mc_version);
     tokio::fs::create_dir_all(&version_dir).await?;
     let json_path = version_dir.join(format!("{}.json", mc_version));
-    let jar_path = version_dir.join(format!("{}.jar", mc_version));
 
     if !json_path.exists() {
-        emit(app, ProgressPayload::Step { step: "Obteniendo manifest de Mojang...".into(), percent: 8 });
-
-        let manifest: serde_json::Value = reqwest::get(VERSION_MANIFEST).await?
-            .json().await.context("Error parseando manifest")?;
-
+        let manifest: serde_json::Value = http::get_json(VERSION_MANIFEST).await?;
         let version_url = manifest["versions"]
             .as_array().context("versions no es array")?
             .iter()
@@ -56,34 +36,55 @@ pub async fn prepare(app: &AppHandle, versions_dir: &Path, mc_version: &str) -> 
             .context(format!("Versión {} no encontrada", mc_version))?["url"]
             .as_str().context("url inválida")?.to_string();
 
-        let version_json = reqwest::get(&version_url).await?
-            .error_for_status()?
-            .text().await.context("Error descargando version JSON")?;
+        let version_json = http::get_text(&version_url).await?;
+        // Validar antes de guardarlo: si no, quedaría roto para siempre
+        serde_json::from_str::<serde_json::Value>(&version_json)
+            .context("JSON de Minecraft inválido")?;
         tokio::fs::write(&json_path, version_json).await?;
     }
 
-    let mc_json: serde_json::Value = serde_json::from_str(
-        &tokio::fs::read_to_string(&json_path).await?,
-    ).context("JSON de Minecraft inválido")?;
+    serde_json::from_str(&tokio::fs::read_to_string(&json_path).await?)
+        .context("JSON de Minecraft inválido")
+}
+
+/// Deja listo Minecraft vanilla: Java, JSON, jar, libraries y assets.
+/// Ocupa de `span.0`% a `span.1`% del paso en curso; los loaders usan el resto.
+pub async fn prepare(
+    reporter: &Reporter,
+    versions_dir: &Path,
+    mc_version: &str,
+    span: (u8, u8),
+) -> Result<PreparedMinecraft> {
+    let launcher_root = versions_dir
+        .parent()
+        .context("No se pudo determinar la raíz del launcher")?;
+    let at = |percent: u32| (span.0 as u32 + (span.1 - span.0) as u32 * percent / 100) as u8;
+
+    progress::sub_range(at(0), at(5));
+    emit(reporter, ProgressPayload::Step { step: "Obteniendo datos de Minecraft...".into(), percent: 0 });
+    let mc_json = version_json(versions_dir, mc_version).await?;
+
+    let java_major = required_java_major(mc_version, &[&mc_json]);
+    let java_bin = ensure_java(java_major, launcher_root, reporter).await?;
 
     // ── Jar del cliente ───────────────────────────────────────
-    progress::sub_range(5, 25);
+    progress::sub_range(at(5), at(25));
+    let jar_path = versions_dir.join(mc_version).join(format!("{}.jar", mc_version));
     if !jar_path.exists() {
         let client_url = mc_json["downloads"]["client"]["url"]
             .as_str().context("URL del cliente no encontrada")?;
-        download::download_to(
-            client_url, &jar_path, Some(app),
+        download::download_resumable(
+            client_url, &jar_path, Some(reporter),
             &format!("Descargando Minecraft {}...", mc_version),
         ).await?;
     }
 
-    progress::sub_range(25, 50);
-    download_libraries(&mc_json, launcher_root, app, "Libraries Minecraft").await?;
-    progress::sub_range(50, 90);
-    download_assets(&mc_json, launcher_root, app).await?;
-    progress::sub_range(90, 100);
+    progress::sub_range(at(25), at(50));
+    download_libraries(&mc_json, launcher_root, reporter, "Libraries Minecraft").await?;
+    progress::sub_range(at(50), at(100));
+    download_assets(&mc_json, launcher_root, reporter).await?;
 
-    Ok(mc_json)
+    Ok(PreparedMinecraft { mc_json, java_bin })
 }
 
 // ── Helpers compartidos con los loaders ───────────────────────
@@ -91,26 +92,16 @@ pub async fn prepare(app: &AppHandle, versions_dir: &Path, mc_version: &str) -> 
 pub async fn download_libraries(
     json: &serde_json::Value,
     launcher_root: &Path,
-    app: &AppHandle,
+    reporter: &Reporter,
     label: &str,
 ) -> Result<()> {
     let libs_dir = launcher_root.join("libraries");
 
-    let items: Vec<(String, std::path::PathBuf)> = json["libraries"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|lib| {
-                    let url = lib["downloads"]["artifact"]["url"].as_str()?;
-                    let path = lib["downloads"]["artifact"]["path"].as_str()?;
-                    if url.is_empty() {
-                        return None;
-                    }
-                    Some((url.to_string(), libs_dir.join(path)))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    // Solo las de este sistema, y con los nativos antiguos si los hay
+    let items: Vec<(String, PathBuf)> = library_files(json)
+        .into_iter()
+        .map(|(url, path)| (url, libs_dir.join(path)))
+        .collect();
 
     info!(
         "[download_libraries] {} — {} items en paralelo",
@@ -118,7 +109,7 @@ pub async fn download_libraries(
         items.len()
     );
 
-    let failures = download::download_many(items, 16, Some(app), label).await;
+    let failures = download::download_many(items, 16, Some(reporter), label).await;
 
     if !failures.is_empty() {
         for f in &failures {
@@ -143,7 +134,7 @@ pub async fn download_libraries(
 pub async fn download_assets(
     mc_json: &serde_json::Value,
     launcher_root: &Path,
-    app: &AppHandle,
+    reporter: &Reporter,
 ) -> Result<()> {
     let asset_index_url = mc_json["assetIndex"]["url"]
         .as_str()
@@ -164,7 +155,7 @@ pub async fn download_assets(
 
     if !index_valid {
         emit(
-            app,
+            reporter,
             ProgressPayload::Step {
                 step: "Descargando índice de assets...".into(),
                 percent: 0,
@@ -214,7 +205,7 @@ pub async fn download_assets(
 
     if pending == 0 {
         emit(
-            app,
+            reporter,
             ProgressPayload::Step {
                 step: "Assets ya descargados".into(),
                 percent: 100,
@@ -225,7 +216,7 @@ pub async fn download_assets(
 
     // Concurrencia moderada: 32 en paralelo estaba gatillando rate-limit de Mojang
     // en ráfagas, causando decenas de fallos simultáneos. 20 es más conservador.
-    let failures = download::download_many(items, 20, Some(app), "Assets").await;
+    let failures = download::download_many(items, 20, Some(reporter), "Assets").await;
 
     if !failures.is_empty() {
         for f in &failures {
@@ -250,7 +241,7 @@ pub async fn download_assets(
 pub async fn download_maven_libraries(
     json: &serde_json::Value,
     launcher_root: &Path,
-    app: &AppHandle,
+    reporter: &Reporter,
     label: &str,
 ) -> Result<()> {
     let libs_dir = launcher_root.join("libraries");
@@ -267,7 +258,7 @@ pub async fn download_maven_libraries(
         .unwrap_or_default();
 
     info!("[download_maven_libraries] {} — {} items en paralelo", label, items.len());
-    let failures = download::download_many(items, 16, Some(app), label).await;
+    let failures = download::download_many(items, 16, Some(reporter), label).await;
     if !failures.is_empty() {
         for f in &failures {
             error!("[download_maven_libraries] {} — fallo definitivo: {} ({})", label, f.dest.display(), f.error);
@@ -279,33 +270,4 @@ pub async fn download_maven_libraries(
         );
     }
     Ok(())
-}
-
-/// `grupo:artefacto:versión[:clasificador]` → `grupo/artefacto/versión/artefacto-versión[-clasificador].jar`
-pub fn maven_relative_path(name: &str) -> Option<String> {
-    let parts: Vec<&str> = name.splitn(4, ':').collect();
-    if parts.len() < 3 {
-        return None;
-    }
-    let (group, artifact, version) = (parts[0].replace('.', "/"), parts[1], parts[2]);
-    let classifier = parts.get(3).map(|c| format!("-{}", c)).unwrap_or_default();
-    Some(format!("{group}/{artifact}/{version}/{artifact}-{version}{classifier}.jar"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn maven_path_with_and_without_classifier() {
-        assert_eq!(
-            maven_relative_path("net.fabricmc:fabric-loader:0.16.10").unwrap(),
-            "net/fabricmc/fabric-loader/0.16.10/fabric-loader-0.16.10.jar"
-        );
-        assert_eq!(
-            maven_relative_path("org.lwjgl:lwjgl:3.3.1:natives-linux").unwrap(),
-            "org/lwjgl/lwjgl/3.3.1/lwjgl-3.3.1-natives-linux.jar"
-        );
-        assert!(maven_relative_path("roto").is_none());
-    }
 }

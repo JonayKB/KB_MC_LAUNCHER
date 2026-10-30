@@ -1,10 +1,16 @@
 use crate::game_logs;
-use crate::installer::loaders::fabric;
-use crate::process_ext::NoConsoleWindow;
-use crate::installer::requirements::{get_java_binary_async, required_java_major};
+use crate::installer::download;
+use crate::installer::extract;
+use crate::installer::loaders::{fabric, forge, neoforge};
+use crate::installer::progress::Reporter;
+use crate::installer::requirements::{ensure_java, required_java_major};
+use crate::installer::rules::{self, library_key, maven_relative_path, rules_allow, NativeLibrary};
 use crate::installer::sysinfo::gc_args;
+use crate::process_ext::NoConsoleWindow;
 use crate::RunningInstances;
 use anyhow::{Context, Result};
+use serde_json::Value;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tauri::{AppHandle, Emitter, Manager};
@@ -93,87 +99,215 @@ fn set_gpu_preference_high_performance(exe_path: &str) {
 #[cfg(not(target_os = "windows"))]
 fn set_gpu_preference_high_performance(_exe_path: &str) {}
 
-pub async fn launch(
-    app: AppHandle,
-    base_path: String,
-    modpack_id: String,
-    modpack_name: String,
-    mc_version: String,
-    loader: String,
-    loader_version: String,
-    auth: LaunchAuth,
-    settings: LaunchSettings,
-) -> Result<()> {
-    let username = auth.username.clone();
-    let base = Path::new(&base_path);
-    let instance_dir = base.join("instances").join(&modpack_id);
+/// Lo necesario para preparar una partida
+pub struct LaunchRequest<'a> {
+    pub base: &'a Path,
+    pub modpack_id: &'a str,
+    pub mc_version: &'a str,
+    pub loader: &'a str,
+    pub loader_version: &'a str,
+    pub auth: &'a LaunchAuth,
+    pub settings: &'a LaunchSettings,
+    pub launcher_version: &'a str,
+}
+
+/// Comando completo de una partida
+pub struct LaunchPlan {
+    pub java_bin: PathBuf,
+    pub args: Vec<String>,
+    pub instance_dir: PathBuf,
+}
+
+/// Carpeta de `versions/` con el JSON del loader
+pub fn version_id(mc_version: &str, loader: &str, loader_version: &str) -> Result<String> {
+    Ok(match loader {
+        "forge" => forge::version_id(mc_version, loader_version),
+        "neoforge" => neoforge::version_id(loader_version),
+        "fabric" => fabric::version_id(mc_version, loader_version),
+        "vanilla" => mc_version.to_string(),
+        other => anyhow::bail!("El loader '{}' no está soportado", other),
+    })
+}
+
+async fn read_json(path: &Path, what: &str) -> Result<Value> {
+    let text = tokio::fs::read_to_string(path)
+        .await
+        .with_context(|| format!("No se pudo leer el JSON de {}. ¿Está instalado el modpack?", what))?;
+    serde_json::from_str(&text).with_context(|| format!("JSON de {} inválido", what))
+}
+
+/// Sustituye las variables de los argumentos de los JSON de versión
+struct ArgResolver<'a> {
+    base: &'a Path,
+    instance_dir: &'a Path,
+    natives_dir: &'a Path,
+    libs_dir: &'a Path,
+    mc_version: &'a str,
+    asset_index: &'a str,
+    auth: &'a LaunchAuth,
+    launcher_version: &'a str,
+}
+
+impl ArgResolver<'_> {
+    fn resolve(&self, arg: &str) -> String {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let assets = self.base.join("assets");
+        arg.replace("${game_directory}", &self.instance_dir.to_string_lossy())
+            .replace("${assets_root}", &assets.to_string_lossy())
+            .replace("${game_assets}", &assets.to_string_lossy())
+            .replace("${assets_index_name}", self.asset_index)
+            .replace("${version_name}", self.mc_version)
+            .replace("${auth_player_name}", &self.auth.username)
+            .replace("${auth_uuid}", &self.auth.uuid)
+            .replace("${auth_access_token}", &self.auth.access_token)
+            .replace("${auth_session}", &self.auth.access_token)
+            .replace("${user_type}", self.auth.user_type)
+            .replace("${user_properties}", "{}")
+            .replace("${version_type}", "release")
+            .replace("${natives_directory}", &self.natives_dir.to_string_lossy())
+            .replace("${launcher_name}", "kb-mc-launcher")
+            .replace("${launcher_version}", self.launcher_version)
+            .replace("${library_directory}", &self.libs_dir.to_string_lossy())
+            .replace("${classpath_separator}", sep)
+    }
+}
+
+/// Valores de `arguments.jvm`/`arguments.game` que aplican a este sistema
+fn json_args(entries: &Value) -> Vec<&str> {
+    let mut args = Vec::new();
+    for entry in entries.as_array().into_iter().flatten() {
+        if let Some(arg) = entry.as_str() {
+            args.push(arg);
+        } else if rules_allow(entry.get("rules")) {
+            match &entry["value"] {
+                Value::String(arg) => args.push(arg.as_str()),
+                Value::Array(values) => args.extend(values.iter().filter_map(Value::as_str)),
+                _ => {}
+            }
+        }
+    }
+    args
+}
+
+/// Bibliotecas del JSON que aplican aquí y están en disco. Con la clave de
+/// `library_key`, el loader sustituye a la versión que traiga Minecraft.
+fn add_libraries(json: &Value, libs_dir: &Path, libraries: &mut BTreeMap<String, PathBuf>) {
+    for lib in json["libraries"].as_array().into_iter().flatten() {
+        if !rules_allow(lib.get("rules")) {
+            continue;
+        }
+        let name = lib["name"].as_str().unwrap_or_default();
+        let jar = lib["downloads"]["artifact"]["path"]
+            .as_str()
+            .map(String::from)
+            .or_else(|| maven_relative_path(name))
+            .map(|path| libs_dir.join(path));
+        if let Some(jar) = jar.filter(|jar| jar.exists()) {
+            libraries.insert(library_key(name), jar);
+        }
+    }
+}
+
+/// Minecraft anterior a la 1.19: los nativos van en jars aparte que hay que extraer
+async fn prepare_legacy_natives(jsons: &[&Value], libs_dir: &Path, natives_dir: &Path) -> Result<()> {
+    let natives: Vec<NativeLibrary> = jsons.iter().flat_map(|json| rules::native_libraries(json)).collect();
+    if natives.is_empty() {
+        return Ok(());
+    }
+
+    let items = natives
+        .iter()
+        .map(|native| (native.file.0.clone(), libs_dir.join(&native.file.1)))
+        .collect();
+    let failures = download::download_many(items, 8, None, "Nativos").await;
+    if let Some(failure) = failures.first() {
+        anyhow::bail!("No se pudieron descargar los nativos del juego: {}", failure.error);
+    }
+
+    let (libs_dir, natives_dir) = (libs_dir.to_owned(), natives_dir.to_owned());
+    extract::run_uninterrupted(move || {
+        for native in &natives {
+            extract_native(&libs_dir.join(&native.file.1), &natives_dir, &native.exclude)?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+fn extract_native(jar: &Path, natives_dir: &Path, exclude: &[String]) -> Result<()> {
+    let file = std::fs::File::open(jar).with_context(|| format!("No se pudo abrir {:?}", jar))?;
+    let mut archive = zip::ZipArchive::new(file).with_context(|| format!("Jar inválido: {:?}", jar))?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        let Some(relative) = entry.enclosed_name() else { continue };
+        let skip = exclude.iter().any(|prefix| entry.name().starts_with(prefix.as_str()));
+        if skip || entry.is_dir() {
+            continue;
+        }
+        let out_path = natives_dir.join(relative);
+        // Otra partida anterior ya lo extrajo (y en Windows podría estar en uso)
+        if std::fs::metadata(&out_path).is_ok_and(|m| m.len() == entry.size()) {
+            continue;
+        }
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::io::copy(&mut entry, &mut std::fs::File::create(&out_path)?)?;
+    }
+    Ok(())
+}
+
+/// Prepara Java y los nativos y construye el comando de la partida
+pub async fn build_plan(request: &LaunchRequest<'_>, reporter: &Reporter) -> Result<LaunchPlan> {
+    let LaunchRequest { base, modpack_id, mc_version, loader, loader_version, auth, settings, launcher_version } = *request;
+    let instance_dir = base.join("instances").join(modpack_id);
     let versions_dir = base.join("versions");
     let libs_dir = base.join("libraries");
 
-    let java_bin = get_java_binary_async(base, &mc_version).await;
-    info!("[launcher::launch] Usando Java: {}", java_bin);
-    info!(
-        "[launcher::launch] RAM: {}MB - {}MB | Fullscreen: {} | {}x{}",
-        settings.min_ram_mb,
-        settings.max_ram_mb,
-        settings.fullscreen,
-        settings.window_width,
-        settings.window_height
-    );
-    set_gpu_preference_high_performance(&java_bin);
-
-    let version_id = match loader.as_str() {
-        "forge" => format!("{}-forge-{}", mc_version, loader_version),
-        "fabric" => fabric::version_id(&mc_version, &loader_version),
-        other => anyhow::bail!("El loader '{}' todavía no está soportado", other),
+    let version_id = version_id(mc_version, loader, loader_version)?;
+    let mc_json = read_json(&versions_dir.join(mc_version).join(format!("{}.json", mc_version)), "Minecraft").await?;
+    // Vanilla no tiene JSON aparte: es el propio de Minecraft
+    let loader_json = if loader == "vanilla" {
+        None
+    } else {
+        Some(read_json(&versions_dir.join(&version_id).join(format!("{}.json", version_id)), "loader").await?)
     };
-    let loader_json_path = versions_dir
-        .join(&version_id)
-        .join(format!("{}.json", version_id));
+    let mut jsons: Vec<&Value> = loader_json.iter().collect();
+    jsons.push(&mc_json);
+    let top_json = jsons[0];
 
-    let loader_json_str = tokio::fs::read_to_string(&loader_json_path)
-        .await
-        .context("No se pudo leer el JSON del loader. ¿Está instalado el modpack?")?;
-    let loader_json: serde_json::Value =
-        serde_json::from_str(&loader_json_str).context("JSON del loader inválido")?;
+    let java_major = required_java_major(mc_version, &jsons);
+    let java_bin = ensure_java(java_major, base, reporter).await?;
+    info!("[launcher::build_plan] Java {}: {:?}", java_major, java_bin);
+    info!(
+        "[launcher::build_plan] RAM: {}MB - {}MB | Fullscreen: {} | {}x{}",
+        settings.min_ram_mb, settings.max_ram_mb, settings.fullscreen, settings.window_width, settings.window_height
+    );
+    set_gpu_preference_high_performance(&java_bin.to_string_lossy());
 
-    let mc_json_path = versions_dir
-        .join(&mc_version)
-        .join(format!("{}.json", mc_version));
-    let mc_json_str = tokio::fs::read_to_string(&mc_json_path)
-        .await
-        .context("No se pudo leer el JSON de Minecraft")?;
-    let mc_json: serde_json::Value =
-        serde_json::from_str(&mc_json_str).context("JSON de Minecraft inválido")?;
     // El índice de assets no coincide con la versión (1.20.1 usa el índice "5")
-    let asset_index = mc_json["assetIndex"]["id"]
+    let asset_index = mc_json["assetIndex"]["id"].as_str().unwrap_or(mc_version).to_string();
+    let main_class = top_json["mainClass"]
         .as_str()
-        .unwrap_or(&mc_version)
-        .to_string();
-
-    let main_class = loader_json["mainClass"]
-        .as_str()
-        .context("mainClass no encontrado en JSON del loader")?
+        .context("mainClass no encontrado en el JSON")?
         .to_string();
 
     // ── Classpath ─────────────────────────────────────────────
-    let mut classpath_entries: Vec<PathBuf> = Vec::new();
-    add_libraries(&mc_json, &libs_dir, &mut classpath_entries);
-    add_libraries(&loader_json, &libs_dir, &mut classpath_entries);
+    let mut libraries = BTreeMap::new();
+    add_libraries(&mc_json, &libs_dir, &mut libraries);
+    if let Some(json) = &loader_json {
+        add_libraries(json, &libs_dir, &mut libraries);
+    }
+    let mut classpath_entries: Vec<PathBuf> = libraries.into_values().collect();
     classpath_entries.sort();
     classpath_entries.dedup();
 
-    let mc_jar = versions_dir
-        .join(&mc_version)
-        .join(format!("{}.jar", mc_version));
+    let mc_jar = versions_dir.join(mc_version).join(format!("{}.jar", mc_version));
     if mc_jar.exists() {
         classpath_entries.push(mc_jar);
     }
-
-    let loader_jar = versions_dir
-        .join(&version_id)
-        .join(format!("{}.jar", version_id));
-    if loader_jar.exists() {
+    let loader_jar = versions_dir.join(&version_id).join(format!("{}.jar", version_id));
+    if loader != "vanilla" && loader_jar.exists() {
         classpath_entries.push(loader_jar);
     }
 
@@ -184,46 +318,31 @@ pub async fn launch(
         .collect::<Vec<_>>()
         .join(sep);
 
-    // ── Module path ───────────────────────────────────────────
-    let ignore_list: Vec<&str> = loader_json["arguments"]["jvm"]
-        .as_array()
-        .and_then(|args| {
-            args.iter().find_map(|a| {
-                a.as_str()
-                    .filter(|s| s.starts_with("-DignoreList="))
-                    .map(|s| s.trim_start_matches("-DignoreList="))
-            })
-        })
-        .unwrap_or("")
-        .split(',')
-        .collect();
-
-    let mut module_path_entries: Vec<String> = Vec::new();
-    for entry in &classpath_entries {
-        let filename = entry.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let in_ignore = ignore_list
-            .iter()
-            .any(|p| !p.is_empty() && filename.contains(p));
-        if in_ignore {
-            let s = entry.to_string_lossy().to_string();
-            if !module_path_entries.contains(&s) {
-                module_path_entries.push(s);
-            }
-        }
+    // ── Nativos ───────────────────────────────────────────────
+    let natives_dir = instance_dir.join("natives");
+    for sub in ["java", "jna", "lwjgl", "netty"] {
+        tokio::fs::create_dir_all(natives_dir.join(sub)).await.ok();
     }
-    let module_path = module_path_entries.join(sep);
+    prepare_legacy_natives(&jsons, &libs_dir, &natives_dir).await?;
+
+    let resolver = ArgResolver {
+        base,
+        instance_dir: &instance_dir,
+        natives_dir: &natives_dir,
+        libs_dir: &libs_dir,
+        mc_version,
+        asset_index: &asset_index,
+        auth,
+        launcher_version,
+    };
 
     // ── JVM args ──────────────────────────────────────────────
-    let natives_dir = instance_dir.join("natives");
-    tokio::fs::create_dir_all(&natives_dir).await.ok();
-
     let mut jvm_args: Vec<String> = vec![
         // RAM desde settings
         format!("-Xms{}M", settings.min_ram_mb),
         format!("-Xmx{}M", settings.max_ram_mb),
         "-Dminecraft.launcher.brand=kb-mc-launcher".to_string(),
-        "-Dminecraft.launcher.version=1.0.0".to_string(),
-        format!("-Djava.library.path={}", natives_dir.to_string_lossy()),
+        format!("-Dminecraft.launcher.version={}", launcher_version),
     ];
 
     // ── Recolector de basura ──────────────────────────────────
@@ -233,7 +352,6 @@ pub async fn launch(
     if let Some(user_gc) = user_args.iter().find(|a| is_gc_selector(a)) {
         info!("[launcher] GC elegido por el usuario: {}", user_gc);
     } else {
-        let java_major = required_java_major(&mc_version);
         let gc = gc_args(java_major, settings.max_ram_mb, num_cpus::get());
         info!(
             "[launcher] GC automático: {} (Java {}, {}MB)",
@@ -245,171 +363,119 @@ pub async fn launch(
     // Args extra (los recomendados y los del usuario): van después de los
     // automáticos para que, si se repite un flag, gane el del usuario
     jvm_args.extend(user_args.iter().map(|a| a.to_string()));
-    // Args JVM del JSON del loader (Forge/Fabric)
 
-    if let Some(jvm_json_args) = loader_json["arguments"]["jvm"].as_array() {
-        let mut skip_next = false;
-        for arg in jvm_json_args {
-            if skip_next {
-                skip_next = false;
-                continue;
-            }
-            if let Some(s) = arg.as_str() {
-                if s == "-cp" || s == "${classpath}" {
-                    continue;
-                }
-                if s == "-p" {
-                    jvm_args.push("-p".to_string());
-                    jvm_args.push(module_path.clone());
-                    skip_next = true;
-                    continue;
-                }
-                // Filtrar args de GC del JSON del loader
-                // para que no conflicten con los nuestros
-                if is_gc_arg(s) {
-                    debug!("[launcher] Filtrando GC arg del JSON del loader: {}", s);
-                    continue;
-                }
-                let resolved = resolve_arg(
-                    s,
-                    &base_path,
-                    &instance_dir,
-                    &libs_dir,
-                    &mc_version,
-                    &asset_index,
-                    &auth,
-                );
-                if !resolved.is_empty() {
-                    jvm_args.push(resolved);
-                }
-            }
-            // ... resto igual (obj/arr) también con el filtro:
-            if let Some(obj) = arg.as_object() {
-                let value = &obj["value"];
-                if let Some(s) = value.as_str() {
-                    if s == "-cp" || s == "${classpath}" {
-                        continue;
-                    }
-                    if is_gc_arg(s) {
-                        continue;
-                    }
-                    let resolved = resolve_arg(
-                        s,
-                        &base_path,
-                        &instance_dir,
-                        &libs_dir,
-                        &mc_version,
-                        &asset_index,
-                        &auth,
-                    );
-                    if !resolved.is_empty() {
-                        jvm_args.push(resolved);
-                    }
-                } else if let Some(arr) = value.as_array() {
-                    for v in arr {
-                        if let Some(s) = v.as_str() {
-                            if s == "-cp" || s == "${classpath}" {
-                                continue;
-                            }
-                            if is_gc_arg(s) {
-                                continue;
-                            }
-                            let resolved = resolve_arg(
-                                s,
-                                &base_path,
-                                &instance_dir,
-                                &libs_dir,
-                                &mc_version,
-                                &asset_index,
-                                &auth,
-                            );
-                            if !resolved.is_empty() {
-                                jvm_args.push(resolved);
-                            }
-                        }
-                    }
-                }
-            }
+    // Args del JSON de Minecraft y, encima, los del loader
+    let mut json_jvm_args: Vec<&str> = json_args(&mc_json["arguments"]["jvm"]);
+    if let Some(json) = &loader_json {
+        json_jvm_args.extend(json_args(&json["arguments"]["jvm"]));
+    }
+    let mut args = json_jvm_args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "-cp" || arg == "${classpath}" {
+            continue;
         }
+        // Filtrar args de GC para que no conflicten con los nuestros
+        if is_gc_arg(arg) {
+            debug!("[launcher] Filtrando GC arg del JSON: {}", arg);
+            continue;
+        }
+        let resolved = resolver.resolve(arg);
+        if !resolved.is_empty() {
+            jvm_args.push(resolved);
+        }
+    }
+
+    // Los JSON antiguos no indican la ruta de los nativos
+    if !jvm_args.iter().any(|a| a.starts_with("-Djava.library.path=")) {
+        jvm_args.push(format!("-Djava.library.path={}", natives_dir.to_string_lossy()));
     }
 
     jvm_args.push("-cp".to_string());
     jvm_args.push(classpath);
 
     // ── Game args ─────────────────────────────────────────────
-    let mut game_args: Vec<String> = vec![
-        "--username".to_string(),
-        username.clone(),
-        "--version".to_string(),
-        version_id.clone(),
-        "--gameDir".to_string(),
-        instance_dir.to_string_lossy().to_string(),
-        "--assetsDir".to_string(),
-        base.join("assets").to_string_lossy().to_string(),
-        "--assetIndex".to_string(),
-        asset_index.clone(),
-        "--uuid".to_string(),
-        auth.uuid.clone(),
-        "--accessToken".to_string(),
-        auth.access_token.clone(),
-        "--userType".to_string(),
-        auth.user_type.to_string(),
-        "--versionType".to_string(),
-        "release".to_string(),
-    ];
+    // Hasta la 1.12 van en una sola cadena, y el loader la sustituye entera
+    let legacy_game_args = jsons.iter().find_map(|json| json["minecraftArguments"].as_str());
+    let mut game_args: Vec<String> = match legacy_game_args {
+        Some(template) => template.split_whitespace().map(|arg| resolver.resolve(arg)).collect(),
+        None => vec![
+            "--username".to_string(),
+            auth.username.clone(),
+            "--version".to_string(),
+            version_id.clone(),
+            "--gameDir".to_string(),
+            instance_dir.to_string_lossy().to_string(),
+            "--assetsDir".to_string(),
+            base.join("assets").to_string_lossy().to_string(),
+            "--assetIndex".to_string(),
+            asset_index.clone(),
+            "--uuid".to_string(),
+            auth.uuid.clone(),
+            "--accessToken".to_string(),
+            auth.access_token.clone(),
+            "--userType".to_string(),
+            auth.user_type.to_string(),
+            "--versionType".to_string(),
+            "release".to_string(),
+        ],
+    };
 
     // Pantalla desde settings
     if settings.fullscreen {
         game_args.push("--fullscreen".to_string());
-        info!("[launcher::launch] Modo pantalla completa activado");
     } else {
         game_args.push("--width".to_string());
         game_args.push(settings.window_width.to_string());
         game_args.push("--height".to_string());
         game_args.push(settings.window_height.to_string());
-        info!(
-            "[launcher::launch] Resolución: {}x{}",
-            settings.window_width, settings.window_height
-        );
     }
 
-    if let Some(game_json_args) = loader_json["arguments"]["game"].as_array() {
-        for arg in game_json_args {
-            if let Some(s) = arg.as_str() {
-                let resolved = resolve_arg(
-                    s,
-                    &base_path,
-                    &instance_dir,
-                    &libs_dir,
-                    &mc_version,
-                    &asset_index,
-                    &auth,
-                );
-                game_args.push(resolved);
-            }
-        }
+    if let Some(json) = &loader_json {
+        game_args.extend(json_args(&json["arguments"]["game"]).into_iter().map(|arg| resolver.resolve(arg)));
     }
 
-    // ── Ejecutar ──────────────────────────────────────────────
     let mut cmd_args = jvm_args;
     cmd_args.push(main_class);
     cmd_args.extend(game_args);
 
-    info!("[launcher::launch] Lanzando con {} args", cmd_args.len());
-    info!("[launcher] CMD ARGS COMPLETOS:");
-    for (i, arg) in cmd_args.iter().enumerate() {
-        // Nunca escribir el token de sesión en los logs
-        let shown = if *arg == auth.access_token && auth.user_type == "msa" {
-            "***"
-        } else {
-            arg.as_str()
-        };
-        info!("[launcher]   [{}] {}", i, shown);
+    Ok(LaunchPlan { java_bin, args: cmd_args, instance_dir })
+}
+
+pub async fn launch(
+    app: AppHandle,
+    base_path: String,
+    modpack_id: String,
+    modpack_name: String,
+    mc_version: String,
+    loader: String,
+    loader_version: String,
+    auth: LaunchAuth,
+    settings: LaunchSettings,
+) -> Result<()> {
+    let launcher_version = app.package_info().version.to_string();
+    let plan = build_plan(
+        &LaunchRequest {
+            base: Path::new(&base_path),
+            modpack_id: &modpack_id,
+            mc_version: &mc_version,
+            loader: &loader,
+            loader_version: &loader_version,
+            auth: &auth,
+            settings: &settings,
+            launcher_version: &launcher_version,
+        },
+        &Reporter::none(),
+    )
+    .await?;
+
+    info!("[launcher::launch] Lanzando con {} args", plan.args.len());
+    for (i, arg) in plan.args.iter().enumerate() {
+        info!("[launcher]   [{}] {}", i, mask_token(arg, &auth));
     }
-    let mut command = tokio::process::Command::new(&java_bin);
+    let mut command = tokio::process::Command::new(&plan.java_bin);
     command
-        .args(&cmd_args)
-        .current_dir(&instance_dir)
+        .args(&plan.args)
+        .current_dir(&plan.instance_dir)
         .env("SHIM_MCCOMPAT", "0x800000001")
         // La salida se muestra en la ventana de logs del launcher, no en una consola
         .stdin(Stdio::null())
@@ -495,87 +561,19 @@ pub async fn launch(
             Ok(())
         }
         Err(e) => {
-            error!("[launcher::launch] Error lanzando '{}': {}", java_bin, e);
-            #[cfg(target_os = "windows")]
-            return Err(e).context(format!(
-                "No se pudo lanzar Java ('{}').\nComprueba que Java 17+ está instalado.\nPuedes descargarlo desde https://adoptium.net",
-                java_bin
-            ));
-            #[cfg(not(target_os = "windows"))]
-            return Err(e).context(format!(
-                "No se pudo lanzar Java ('{}').\nComprueba que Java 17+ está instalado.",
-                java_bin
-            ));
+            error!("[launcher::launch] Error lanzando {:?}: {}", plan.java_bin, e);
+            Err(e).context(format!("No se pudo lanzar Java ({:?})", plan.java_bin))
         }
     }
 }
 
-fn maven_name_to_path(libs_dir: &Path, name: &str) -> PathBuf {
-    let parts: Vec<&str> = name.splitn(4, ':').collect();
-    if parts.len() < 3 {
-        return libs_dir.to_path_buf();
-    }
-    let group = parts[0].replace('.', "/");
-    let artifact = parts[1];
-    let version = parts[2];
-    let classifier = if parts.len() == 4 {
-        format!("-{}", parts[3])
+/// Nunca escribir el token de sesión en los logs
+fn mask_token(arg: &str, auth: &LaunchAuth) -> String {
+    if auth.user_type == "msa" {
+        arg.replace(&auth.access_token, "***")
     } else {
-        String::new()
-    };
-    libs_dir
-        .join(group)
-        .join(artifact)
-        .join(version)
-        .join(format!("{}-{}{}.jar", artifact, version, classifier))
-}
-
-fn add_libraries(json: &serde_json::Value, libs_dir: &Path, classpath_entries: &mut Vec<PathBuf>) {
-    if let Some(libs) = json["libraries"].as_array() {
-        for lib in libs {
-            if let Some(path) = lib["downloads"]["artifact"]["path"].as_str() {
-                let jar = libs_dir.join(path);
-                if jar.exists() {
-                    classpath_entries.push(jar);
-                }
-            }
-            if let Some(name) = lib["name"].as_str() {
-                let jar = maven_name_to_path(libs_dir, name);
-                if jar.exists() {
-                    classpath_entries.push(jar);
-                }
-            }
-        }
+        arg.to_string()
     }
-}
-
-fn resolve_arg(
-    arg: &str,
-    base_path: &str,
-    instance_dir: &Path,
-    libs_dir: &Path,
-    mc_version: &str,
-    asset_index: &str,
-    auth: &LaunchAuth,
-) -> String {
-    let sep = if cfg!(windows) { ";" } else { ":" };
-    arg.replace("${game_directory}", &instance_dir.to_string_lossy())
-        .replace("${assets_root}", &format!("{}/assets", base_path))
-        .replace("${assets_index_name}", asset_index)
-        .replace("${version_name}", mc_version)
-        .replace("${auth_player_name}", &auth.username)
-        .replace("${auth_uuid}", &auth.uuid)
-        .replace("${auth_access_token}", &auth.access_token)
-        .replace("${user_type}", auth.user_type)
-        .replace("${version_type}", "release")
-        .replace(
-            "${natives_directory}",
-            &instance_dir.join("natives").to_string_lossy(),
-        )
-        .replace("${launcher_name}", "kb-mc-launcher")
-        .replace("${launcher_version}", "1.0.0")
-        .replace("${library_directory}", &libs_dir.to_string_lossy())
-        .replace("${classpath_separator}", sep)
 }
 
 /// Flag que selecciona un recolector de basura concreto
@@ -610,6 +608,39 @@ fn is_gc_arg(arg: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_never_reaches_the_logs() {
+        let auth = LaunchAuth::new("Steve".into(), Some("abc".into()), Some("tok123".into()));
+        assert_eq!(mask_token("--accessToken", &auth), "--accessToken");
+        assert_eq!(mask_token("tok123", &auth), "***");
+        assert_eq!(mask_token("token:tok123:Steve", &auth), "token:***:Steve");
+    }
+
+    #[test]
+    fn json_args_apply_rules_and_values() {
+        let args = serde_json::json!([
+            "-a",
+            { "rules": [{ "action": "allow", "os": { "name": "plan9" } }], "value": "-no" },
+            { "rules": [{ "action": "allow" }], "value": ["-b", "-c"] }
+        ]);
+        assert_eq!(json_args(&args), vec!["-a", "-b", "-c"]);
+    }
+
+    #[test]
+    fn loader_library_replaces_minecraft_version() {
+        let dir = tempfile::tempdir().unwrap();
+        for version in ["1", "2"] {
+            let jar = dir.path().join(maven_relative_path(&format!("g:a:{version}")).unwrap());
+            std::fs::create_dir_all(jar.parent().unwrap()).unwrap();
+            std::fs::write(jar, "").unwrap();
+        }
+        let mut libraries = BTreeMap::new();
+        add_libraries(&serde_json::json!({ "libraries": [{ "name": "g:a:1" }] }), dir.path(), &mut libraries);
+        add_libraries(&serde_json::json!({ "libraries": [{ "name": "g:a:2" }] }), dir.path(), &mut libraries);
+        assert_eq!(libraries.len(), 1);
+        assert!(libraries["g:a"].ends_with("a-2.jar"));
+    }
 
     #[test]
     fn gc_selector_only_matches_collector_choice() {

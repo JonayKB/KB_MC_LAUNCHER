@@ -2,7 +2,7 @@ use crate::auth::xbox::XboxTokens;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MinecraftProfile {
@@ -120,7 +120,6 @@ pub async fn authenticate(client: &reqwest::Client, xbox: &XboxTokens) -> Result
         }
         None => {
             warn!("[minecraft] expiresIn no encontrado en la respuesta, usando fallback de 86400s (24h)");
-            debug!("[minecraft] mc_resp completo: {}", mc_resp);
             86400
         }
     };

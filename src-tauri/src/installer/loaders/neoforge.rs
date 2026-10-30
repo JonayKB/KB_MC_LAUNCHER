@@ -1,48 +1,27 @@
-use anyhow::{Context, Result};
+use crate::installer::loaders::forge::{self, LoaderInstaller};
+use crate::installer::progress::Reporter;
+use anyhow::Result;
 use std::path::Path;
-use tauri::AppHandle;
-use crate::installer::progress::{emit, ProgressPayload};
-use crate::installer::download;
-use crate::process_ext::NoConsoleWindow;
+
+/// Id de versión que genera el instalador de NeoForge
+pub fn version_id(neoforge_version: &str) -> String {
+    format!("neoforge-{}", neoforge_version)
+}
 
 pub async fn install(
-    app: &AppHandle,
+    reporter: &Reporter,
     versions_dir: &Path,
-    _instance_dir: &Path,
-    _mc_version: &str,
+    mc_version: &str,
     neoforge_version: &str,
 ) -> Result<()> {
-    emit(app, ProgressPayload::Step { step: "Descargando instalador de NeoForge...".into(), percent: 10 });
-
-    let installer_url = format!(
-        "https://maven.neoforged.net/releases/net/neoforged/neoforge/{v}/neoforge-{v}-installer.jar",
-        v = neoforge_version,
-    );
-
-    let installer_path = download::download_to_temp(&installer_url, "neoforge-installer.jar").await
-        .context("Error descargando NeoForge installer")?;
-
-    emit(app, ProgressPayload::Step { step: "Ejecutando instalador de NeoForge...".into(), percent: 30 });
-
-    let status = tokio::process::Command::new("java")
-        .args([
-            "-jar",
-            installer_path.to_str().unwrap(),
-            "--installClient",
-            versions_dir.parent().unwrap().to_str().unwrap(),
-        ])
-        .kill_on_drop(true)
-        .no_console_window()
-        .status()
-        .await
-        .context("No se pudo ejecutar Java. ¿Está instalado?")?;
-
-    tokio::fs::remove_file(&installer_path).await.ok();
-
-    if !status.success() {
-        anyhow::bail!("El instalador de NeoForge falló con código {:?}", status.code());
-    }
-
-    emit(app, ProgressPayload::Step { step: "NeoForge instalado".into(), percent: 55 });
-    Ok(())
+    let installer = LoaderInstaller {
+        name: "NeoForge",
+        url: format!(
+            "https://maven.neoforged.net/releases/net/neoforged/neoforge/{v}/neoforge-{v}-installer.jar",
+            v = neoforge_version,
+        ),
+        client_flag: "--install-client",
+        version_id: version_id(neoforge_version),
+    };
+    forge::run_installer(reporter, versions_dir, mc_version, installer).await
 }

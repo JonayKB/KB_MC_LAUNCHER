@@ -3,7 +3,7 @@ import { useUser } from '../context/UserContext';
 import { layout, logo, header, box, text, btn, input as inp } from '../styles/components';
 import { invoke } from '@tauri-apps/api/core';
 import { LoginCompleteResponse } from '../types/setup';
-import { Account, accountFromLogin, upsertAccount, validateOfflineUsername } from '../types/account';
+import { Account, accountFromLogin, isLoginCancelled, upsertAccount, validateOfflineUsername } from '../types/account';
 
 type Step = 'owns_minecraft' | 'offline_username' | 'microsoft_prompt';
 
@@ -45,7 +45,7 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
             setLoginState('done');
             finish(accountFromLogin(result));
         } catch (e) {
-            setLoginError(String(e));
+            setLoginError(isLoginCancelled(e) ? null : String(e));
             setLoginState('idle');
         }
     }
@@ -171,6 +171,14 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
                                     Esperando inicio de sesión...
                                 </span>
                             </div>
+                        )}
+                        {loginState === 'polling' && (
+                            <button
+                                style={{ ...btn.secondary, ...(backHovered ? btn.secondaryHover : {}) }}
+                                onMouseEnter={() => setBackHovered(true)}
+                                onMouseLeave={() => setBackHovered(false)}
+                                onClick={() => invoke('cancel_login')}
+                            >Cancelar</button>
                         )}
 
 

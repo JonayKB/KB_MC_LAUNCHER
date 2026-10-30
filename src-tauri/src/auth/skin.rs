@@ -6,8 +6,13 @@ use tracing::info;
 pub async fn get_head_png(skin_url: &str) -> Result<Vec<u8>> {
     info!("[skin] Descargando skin desde: {}", skin_url);
 
-    let bytes = reqwest::get(skin_url)
+    let bytes = crate::installer::http::client()
+        .get(skin_url)
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
         .await
+        .context("Error descargando skin")?
+        .error_for_status()
         .context("Error descargando skin")?
         .bytes()
         .await

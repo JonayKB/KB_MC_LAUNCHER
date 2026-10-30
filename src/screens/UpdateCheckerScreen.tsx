@@ -5,6 +5,10 @@ import { getVersion } from '@tauri-apps/api/app';
 import { UpdateCheckerProps, UpdaterState } from '../types';
 import { layout, logo, header, badge, progress as pg, box, text, btn, spinner } from '../styles/components';
 
+/** Si el servidor no contesta, mejor seguir: no debe impedir abrir el launcher */
+const CHECK_TIMEOUT_MS = 10_000;
+const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
+
 export default function UpdateChecker({ onComplete }: UpdateCheckerProps) {
     const [state, setState] = useState<UpdaterState>('checking');
     const [message, setMessage] = useState('Conectando con el servidor...');
@@ -23,7 +27,7 @@ export default function UpdateChecker({ onComplete }: UpdateCheckerProps) {
         try {
             setState('checking');
             setMessage('Conectando con el servidor...');
-            const update = await check();
+            const update = await check({ timeout: CHECK_TIMEOUT_MS });
             if (!update) {
                 setMessage('La aplicación está actualizada');
                 setState('up-to-date');
@@ -43,7 +47,7 @@ export default function UpdateChecker({ onComplete }: UpdateCheckerProps) {
                     setProgressVal(100);
                     setMessage('Instalando actualización...');
                 }
-            });
+            }, { timeout: DOWNLOAD_TIMEOUT_MS });
             setMessage('Reiniciando la aplicación...');
             await update.install();
             await relaunch();
