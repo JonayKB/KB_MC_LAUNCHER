@@ -9,7 +9,10 @@ use tauri::{AppHandle, Manager, State, Window};
 use tracing::{error, info, warn};
 
 /// Únicos orígenes que el frontend puede descargar mediante `fetch_text`
-const ALLOWED_FETCH_PREFIXES: &[&str] = &["https://me.jonaykb.com/"];
+const ALLOWED_FETCH_PREFIXES: &[&str] = &[
+    "https://me.jonaykb.com/",
+    "https://discord.jonaykb.com/",
+];
 
 #[derive(serde::Serialize)]
 pub struct LoginCompleteResponse {
