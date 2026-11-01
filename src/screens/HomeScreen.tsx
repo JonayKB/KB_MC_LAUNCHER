@@ -14,6 +14,7 @@ import { LOADER_LABELS, formatCountdown, formatReleaseDate, nextRelease, release
 import { useNow } from "../hooks/useNow";
 import type { RecommendedSettings } from "../types/modpackSettings";
 import DiscordCard from "../components/DiscordCard";
+import NewsPanel from "../components/NewsPanel";
 
 const GITHUB_ISSUES_URL = 'https://github.com/jonaykb/KB_MC_LAUNCHER/issues';
 
@@ -321,6 +322,8 @@ export default function HomeScreen() {
                         </div>
                     ) : null}
                 </section>
+
+                <NewsPanel />
 
                 {featured?.latest?.changelog && (
                     <section>

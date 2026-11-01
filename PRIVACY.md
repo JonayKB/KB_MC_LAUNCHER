@@ -43,7 +43,8 @@ KB MC Launcher communicates with:
 * Eclipse Adoptium and GitHub, to download Java
 * me.jonaykb.com, operated by the author, for the modpack list, modpack files and launcher updates
 * Discord, to show the community server card
-* The image hosts referenced by each modpack
+* discord.jonaykb.com, operated by the author, for the news shown on the home screen
+* The image hosts referenced by each modpack and each news message, including Discord's image servers
 
 These services receive the user's IP address and the requests needed to provide each download, as with any internet connection. Only the Microsoft, Xbox and Minecraft services receive authentication tokens. The third-party services are governed by their own privacy policies and terms of use.
 
