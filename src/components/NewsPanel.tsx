@@ -1,41 +1,12 @@
 import { useEffect, useState } from "react";
 import { open } from '@tauri-apps/plugin-shell';
+import DiscordMarkdown from "./DiscordMarkdown";
 import { fetchNews, NewsMessage, NewsPoll } from "../repositories/NewsRepository";
 import { formatTimeAgo } from "../repositories/PlayHistory";
 import { formatReleaseDate } from "../types/modpack";
-import { home } from "../styles/homeStyles";
 import { news } from "../styles/newsStyles";
 
 const REFRESH_MS = 5 * 60 * 1000;
-const URL_PATTERN = /(https?:\/\/[^\s<>]+)/g;
-
-function MessageText({ text }: Readonly<{ text: string }>) {
-    // split con grupo de captura: las posiciones impares son las URLs
-    const parts = text.split(URL_PATTERN);
-    return (
-        <p style={news.content}>
-            {parts.map((part, i) => {
-                if (i % 2 === 0) return part;
-                const url = part.replace(/[.,;:!?)\]]+$/, '');
-                return (
-                    <span key={`${i}-${url}`}>
-                        <a
-                            href={url}
-                            style={news.inlineLink}
-                            onClick={(e) => {
-                                e.preventDefault();
-                                open(url).catch(console.error);
-                            }}
-                        >
-                            {url}
-                        </a>
-                        {part.slice(url.length)}
-                    </span>
-                );
-            })}
-        </p>
-    );
-}
 
 function PollCard({ poll, url }: Readonly<{ poll: NewsPoll; url: string }>) {
     const total = poll.answers.reduce((sum, answer) => sum + answer.votes, 0);
@@ -92,7 +63,7 @@ function NewsItem({ message }: Readonly<{ message: NewsMessage }>) {
                         Ver en Discord
                     </button>
                 </div>
-                {message.content && <MessageText text={message.content} />}
+                {message.content && <DiscordMarkdown text={message.content} />}
                 {message.poll && <PollCard poll={message.poll} url={message.url} />}
                 {message.images.map(url => (
                     <img
@@ -124,12 +95,10 @@ export default function NewsPanel() {
     if (messages.length === 0) return null;
 
     return (
-        <section>
-            <h2 style={home.sectionTitle}>Noticias</h2>
-            <div style={home.panel}>
-                <div style={news.list}>
-                    {messages.map(message => <NewsItem key={message.id} message={message} />)}
-                </div>
+        <section style={news.panel}>
+            <h2 style={news.panelTitle}>Noticias</h2>
+            <div style={news.list}>
+                {messages.map(message => <NewsItem key={message.id} message={message} />)}
             </div>
         </section>
     );

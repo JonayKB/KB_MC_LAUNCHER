@@ -323,8 +323,6 @@ export default function HomeScreen() {
                     ) : null}
                 </section>
 
-                <NewsPanel />
-
                 {featured?.latest?.changelog && (
                     <section>
                         <h2 style={home.sectionTitle}>Novedades de {featured.entry.name} v{featured.latest.version}</h2>
@@ -337,7 +335,7 @@ export default function HomeScreen() {
 
             <aside style={home.side}>
                 <DiscordCard />
-                <div style={{ ...home.panel, marginTop: 0, padding: '10px' }}>
+                <div style={{ ...home.panel, marginTop: 0, padding: '10px', flexShrink: 0 }}>
                     <h2 style={{ ...home.sectionTitle, padding: '6px 12px 8px' }}>Accesos rápidos</h2>
                     {basePath && (
                         <QuickLink
@@ -352,6 +350,7 @@ export default function HomeScreen() {
                         onClick={() => open(GITHUB_ISSUES_URL)}
                     />
                 </div>
+                <NewsPanel />
             </aside>
         </div>
     );

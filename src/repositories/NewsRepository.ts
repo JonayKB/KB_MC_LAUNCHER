@@ -22,7 +22,7 @@ export interface NewsMessage {
     id: string;
     authorName: string;
     authorAvatarUrl: string | null;
-    /** Texto plano: el bot ya ha resuelto menciones, emojis y markdown */
+    /** Markdown de Discord con menciones y emojis ya resueltos por el bot */
     content: string;
     createdAt: number;
     /** Enlace al mensaje en Discord */
@@ -66,7 +66,9 @@ function parsePoll(raw: any): NewsPoll | null {
 
 function parseMessage(raw: any): NewsMessage | null {
     const createdAt = Date.parse(raw?.createdAt);
-    const content = typeof raw?.content === 'string' ? raw.content.trim() : '';
+    // `markdown` es opcional: el launcher 1.5.0 solo lee `content`, que sigue siendo texto plano
+    const source = typeof raw?.markdown === 'string' && raw.markdown.trim() !== '' ? raw.markdown : raw?.content;
+    const content = typeof source === 'string' ? source.trim() : '';
     const images: string[] = Array.isArray(raw?.images)
         ? raw.images.map((image: any) => image?.url).filter(isHttpsUrl)
         : [];
