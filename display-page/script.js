@@ -99,9 +99,9 @@ function setupReveal() {
     }
 
     // Escalonado entre elementos hermanos (tarjetas de funciones, plataformas...).
-    document.querySelectorAll(".feature-grid, .platform-grid").forEach(group => {
+    document.querySelectorAll(".demo-grid, .feature-list, .platform-grid").forEach(group => {
         [...group.children].forEach((child, i) => {
-            child.style.setProperty("--stagger", `${i * 70}ms`);
+            child.style.setProperty("--stagger", `${(i % 4) * 60}ms`);
         });
     });
 
@@ -143,25 +143,278 @@ function setupVideos() {
     });
 }
 
-/* ── Inclinación sutil de la captura del hero ────────────────── */
+/* ── Utilidades de las demos ─────────────────────────────────── */
 
-function setupTilt() {
-    const visual = document.querySelector(".hero-visual");
-    const frame = visual?.querySelector(".window");
-    if (!frame || prefersReducedMotion || !window.matchMedia("(pointer: fine)").matches) return;
+// Las demos solo corren en pantalla; sin movimiento se quedan en su estado final.
+function whileVisible(element, onEnter, onLeave) {
+    new IntersectionObserver(([entry]) => {
+        if (entry.isIntersecting) onEnter();
+        else onLeave?.();
+    }, { threshold: 0.3 }).observe(element);
+}
 
-    visual.addEventListener("pointermove", e => {
-        const rect = visual.getBoundingClientRect();
-        const x = (e.clientX - rect.left) / rect.width - 0.5;
-        const y = (e.clientY - rect.top) / rect.height - 0.5;
-        frame.style.setProperty("--ry", `${(x * 8 - 3).toFixed(2)}deg`);
-        frame.style.setProperty("--rx", `${(-y * 6 + 1).toFixed(2)}deg`);
+function makeBlocks(container, count) {
+    container.innerHTML = "<i></i>".repeat(count);
+    return [...container.children];
+}
+
+function tween(duration, update) {
+    if (prefersReducedMotion) {
+        update(1);
+        return;
+    }
+    const started = performance.now();
+    const step = now => {
+        const t = Math.min(1, (now - started) / duration);
+        update(1 - Math.pow(1 - t, 3));
+        if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+}
+
+/* ── Réplica de la Home ──────────────────────────────────────── */
+
+function setupAppPreview() {
+    const hour = new Date().getHours();
+    let greeting = "Buenas tardes";
+    if (hour < 7 || hour >= 21) greeting = "Buenas noches";
+    else if (hour < 14) greeting = "Buenos días";
+
+    setText("app-greeting", `${greeting}, Steve`);
+    setText("app-date", new Date().toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" }));
+
+    const poll = document.getElementById("poll");
+    const answers = [...poll.querySelectorAll(".poll-answer")];
+    const total = answers.reduce((sum, answer) => sum + Number(answer.dataset.votes), 0);
+    let played = false;
+
+    const show = progress => {
+        answers.forEach(answer => {
+            const votes = Number(answer.dataset.votes);
+            const percent = Math.round((votes / total) * 100);
+            answer.querySelector("i").style.transform = `scaleX(${(votes / total) * progress})`;
+            answer.querySelector("small").textContent = `${Math.round(votes * progress)} · ${Math.round(percent * progress)}%`;
+        });
+        setText("poll-total", Math.round(total * progress));
+    };
+
+    show(0);
+    whileVisible(poll, () => {
+        if (played) return;
+        played = true;
+        setTimeout(() => tween(1100, show), prefersReducedMotion ? 0 : 350);
     });
+}
 
-    visual.addEventListener("pointerleave", () => {
-        frame.style.removeProperty("--ry");
-        frame.style.removeProperty("--rx");
+/* ── Consola ─────────────────────────────────────────────────── */
+
+const CONSOLE_LINES = [
+    ["INFO", "[main] Loading Minecraft 1.20.1 with Forge 47.4.10"],
+    ["INFO", "[modloading] Found 212 mods to load"],
+    ["INFO", "[modloading] Loading configs"],
+    ["WARN", "[mixin] Mod 'exilecompat' uses an older config"],
+    ["INFO", "[Render] OpenGL 4.6, 8192 MB allocated"],
+    ["ERROR", "[modloading] Mod 'exilecompat' failed to load"]
+];
+
+function setupConsole() {
+    const root = document.getElementById("console");
+    const lines = document.getElementById("console-lines");
+    const crash = document.getElementById("console-crash");
+    let timer = 0;
+
+    const addLine = ([level, text]) => {
+        const line = document.createElement("div");
+        line.className = `console-line is-${level.toLowerCase()}`;
+        line.innerHTML = `<span></span><code></code>`;
+        line.firstChild.textContent = level;
+        line.lastChild.textContent = text;
+        lines.append(line);
+    };
+
+    const reset = () => {
+        clearTimeout(timer);
+        lines.textContent = "";
+        crash.classList.remove("is-visible");
+    };
+
+    const play = () => {
+        reset();
+        if (prefersReducedMotion) {
+            CONSOLE_LINES.forEach(addLine);
+            crash.classList.add("is-visible");
+            return;
+        }
+
+        let index = 0;
+        const next = () => {
+            if (index < CONSOLE_LINES.length) {
+                addLine(CONSOLE_LINES[index++]);
+                timer = setTimeout(next, 420 + Math.random() * 360);
+                return;
+            }
+            crash.classList.add("is-visible");
+            timer = setTimeout(play, 6000);
+        };
+        next();
+    };
+
+    whileVisible(root, play, reset);
+}
+
+/* ── Cuenta atrás de un modpack anunciado ────────────────────── */
+
+function setupReleaseDemo() {
+    const root = document.getElementById("release-demo");
+    const button = document.getElementById("release-button");
+    let timer = 0;
+
+    const unlock = () => {
+        root.classList.add("is-released");
+        button.textContent = "Instalar";
+    };
+
+    const play = () => {
+        clearInterval(timer);
+        root.classList.remove("is-released");
+        if (prefersReducedMotion) {
+            unlock();
+            return;
+        }
+
+        let seconds = 9;
+        button.textContent = `Disponible en ${seconds} s`;
+        timer = setInterval(() => {
+            seconds--;
+            if (seconds > 0) {
+                button.textContent = `Disponible en ${seconds} s`;
+                return;
+            }
+            clearInterval(timer);
+            unlock();
+            timer = setTimeout(play, 5000);
+        }, 1000);
+    };
+
+    whileVisible(root, play, () => {
+        clearInterval(timer);
+        clearTimeout(timer);
     });
+}
+
+/* ── Descargas en paralelo ───────────────────────────────────── */
+
+function setupTransfers() {
+    const root = document.getElementById("transfers");
+    const rows = [...root.querySelectorAll(".transfer")].map(row => ({
+        row,
+        label: row.querySelector("small"),
+        cells: makeBlocks(row.querySelector(".blocks"), 28),
+        speed: Number(row.dataset.speed),
+        stall: Number(row.dataset.stall) || 0,
+        progress: 0,
+        waited: 0
+    }));
+    let frame = 0;
+    let last = 0;
+    let doneFor = 0;
+
+    const paint = item => {
+        const lit = Math.floor(item.progress * item.cells.length);
+        item.cells.forEach((cell, i) => cell.classList.toggle("on", i < lit));
+
+        const stalled = item.row.classList.contains("is-stalled");
+        item.label.textContent = stalled ? "Reanudando..." : `${Math.floor(item.progress * 100)}%`;
+    };
+
+    const update = now => {
+        frame = requestAnimationFrame(update);
+        if (now - last < 80) return; // los bloques avanzan a saltos, no hace falta más
+        const delta = (now - last) / 1000;
+        last = now;
+
+        for (const item of rows) {
+            const stalling = item.stall && item.progress >= item.stall && item.waited < 1.8;
+            item.row.classList.toggle("is-stalled", Boolean(stalling));
+            if (stalling) item.waited += delta;
+            else item.progress = Math.min(1, item.progress + delta * item.speed / 10);
+            paint(item);
+        }
+
+        if (rows.every(item => item.progress >= 1)) {
+            doneFor += delta;
+            if (doneFor > 2.5) {
+                doneFor = 0;
+                rows.forEach(item => {
+                    item.progress = 0;
+                    item.waited = 0;
+                });
+            }
+        }
+    };
+
+    if (prefersReducedMotion) {
+        rows.forEach(item => {
+            item.progress = 1;
+            paint(item);
+        });
+        return;
+    }
+
+    whileVisible(root, () => {
+        cancelAnimationFrame(frame);
+        last = performance.now();
+        frame = requestAnimationFrame(update);
+    }, () => cancelAnimationFrame(frame));
+}
+
+/* ── Java por versión ────────────────────────────────────────── */
+
+function setupJavaDemo() {
+    const list = document.getElementById("java");
+    const rows = [...list.children];
+    let index = 0;
+    let timer = 0;
+
+    const select = () => rows.forEach((row, i) => row.classList.toggle("is-active", i === index));
+    select();
+    if (prefersReducedMotion) return;
+
+    whileVisible(list, () => {
+        clearInterval(timer);
+        timer = setInterval(() => {
+            index = (index + 1) % rows.length;
+            select();
+        }, 1600);
+    }, () => clearInterval(timer));
+}
+
+/* ── Raíl de pasos: se llena al bajar ────────────────────────── */
+
+function setupStepsRail() {
+    const rail = document.getElementById("steps-rail");
+    if (!rail || prefersReducedMotion) {
+        rail?.classList.add("is-full");
+        return;
+    }
+
+    let queued = false;
+    const update = () => {
+        queued = false;
+        const box = rail.getBoundingClientRect();
+        const progress = (window.innerHeight * 0.6 - box.top) / box.height;
+        rail.firstElementChild.style.transform = `scaleY(${Math.max(0, Math.min(1, progress)).toFixed(3)})`;
+    };
+
+    const request = () => {
+        if (queued) return;
+        queued = true;
+        requestAnimationFrame(update);
+    };
+
+    window.addEventListener("scroll", request, { passive: true });
+    window.addEventListener("resize", request);
+    update();
 }
 
 /* ── Información de la última release ────────────────────────── */
@@ -180,6 +433,7 @@ async function loadReleaseInfo() {
 
         setText("version", release.tag_name);
         setText("hero-version", `${release.tag_name} disponible`);
+        setText("app-version", `Launcher ${release.tag_name}`);
         setText("publish-date", formatRelativeDate(release.published_at));
 
         if (release.html_url) {
@@ -218,5 +472,10 @@ async function loadReleaseInfo() {
 highlightPlatform();
 setupReveal();
 setupVideos();
-setupTilt();
+setupAppPreview();
+setupConsole();
+setupReleaseDemo();
+setupTransfers();
+setupJavaDemo();
+setupStepsRail();
 loadReleaseInfo();

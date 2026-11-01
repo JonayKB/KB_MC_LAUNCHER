@@ -4,27 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KB MC Launcher</title>
-    <meta name="description" content="Launcher oficial para entrar al servidor de KB Servers. Login con Microsoft, Java automático y el modpack siempre actualizado.">
+    <meta name="description" content="Launcher oficial para entrar al servidor de KB Servers. Login con Microsoft, Java automático, noticias del Discord y el modpack siempre actualizado.">
 
     <meta property="og:type" content="website">
     <meta property="og:title" content="KB MC Launcher">
-    <meta property="og:description" content="Launcher oficial de KB Servers. Login con Microsoft, Java automático y el modpack siempre actualizado.">
+    <meta property="og:description" content="Launcher oficial de KB Servers. Login con Microsoft, Java automático, noticias del Discord y el modpack siempre actualizado.">
     <meta property="og:image" content="https://kb-launcher.jonaykb.com/assets/launcher-screenshot.png">
     <meta property="og:url" content="https://kb-launcher.jonaykb.com">
 
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="KB MC Launcher">
-    <meta name="twitter:description" content="Launcher oficial de KB Servers. Login con Microsoft, Java automático y el modpack siempre actualizado.">
+    <meta name="twitter:description" content="Launcher oficial de KB Servers. Login con Microsoft, Java automático, noticias del Discord y el modpack siempre actualizado.">
     <meta name="twitter:image" content="https://kb-launcher.jonaykb.com/assets/launcher-screenshot.png">
 
     <meta name="theme-color" content="#080809">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="shortcut icon" href="/favicon.ico">
 
-    <link rel="stylesheet" href="styles.css?v=3">
+    <link rel="stylesheet" href="styles.css?v=4">
 
     <script>document.documentElement.classList.add("js");</script>
 </head>
@@ -40,6 +40,7 @@
         </a>
 
         <nav class="nav-links" aria-label="Secciones">
+            <a href="#launcher">Launcher</a>
             <a href="#features">Funciones</a>
             <a href="#how">Cómo funciona</a>
             <a href="#download">Descarga</a>
@@ -58,7 +59,7 @@
 <main id="main">
 
 <section class="hero" id="top">
-    <div class="hero-bg" aria-hidden="true"></div>
+    <canvas id="world" class="hero-world" role="img" aria-label="Un trozo de mundo de Minecraft que se construye bloque a bloque mientras se instala el modpack"></canvas>
 
     <div class="container hero-grid">
 
@@ -67,12 +68,11 @@
 
             <h1 class="hero-in" style="--d:1">
                 Entra al server
-                <span>sin complicarte.</span>
+                <span>sin complicarte</span>
             </h1>
 
             <p class="hero-lead hero-in" style="--d:2">
-                Inicia sesión con tu cuenta de Microsoft o crea una cuenta offline y listo:
-                el modpack se instala y se actualiza solo, sin tocar nada a mano.
+                Inicia sesión con Microsoft o crea una cuenta offline. El modpack se instala y se actualiza solo, sin tocar nada a mano.
             </p>
 
             <div class="hero-buttons hero-in" style="--d:3">
@@ -81,7 +81,7 @@
                     <span id="hero-download-label">Descargar</span>
                 </a>
 
-                <a href="#features" class="btn btn-ghost btn-lg">Ver qué incluye</a>
+                <a href="#launcher" class="btn btn-ghost btn-lg">Ver el launcher</a>
             </div>
 
             <ul class="hero-meta hero-in" style="--d:4">
@@ -91,15 +91,110 @@
             </ul>
         </div>
 
-        <div class="hero-visual hero-in" style="--d:2">
-            <div class="window">
-                <div class="window-bar" aria-hidden="true">
-                    <span class="window-title">KB MC Launcher</span>
-                    <span class="window-controls"><i></i><i></i><i></i></span>
+        <div class="hero-stage" id="hero-stage">
+            <div class="install is-ready" id="install">
+                <div aria-hidden="true">
+                    <div class="install-head">
+                        <span class="install-name">Craft to Exile 2</span>
+                        <span class="install-percent" id="install-percent">100%</span>
+                    </div>
+                    <p class="install-step" id="install-step">Listo para jugar.</p>
+                    <div class="blocks" id="install-blocks">
+                        <i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i>
+                    </div>
+                    <div class="install-ready">
+                        <span class="install-meta">MC 1.20.1 · Forge 47.4.10</span>
+                        <span class="install-play">Jugar</span>
+                    </div>
                 </div>
-                <img src="assets/launcher-screenshot.png" alt="Pantalla principal del launcher con el modpack de KB Servers listo para jugar" width="1280" height="800">
+                <button class="install-replay" id="world-replay" type="button" aria-label="Volver a construir el mundo" title="Volver a construir">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+                </button>
+            </div>
+            <p class="hero-hint">Haz clic en el mundo para romper bloques</p>
+        </div>
+
+    </div>
+</section>
+
+
+<section id="launcher" class="section section-launcher">
+    <div class="container">
+
+        <header class="section-head reveal">
+            <h2>Las noticias del server, nada más abrir</h2>
+            <p>Los anuncios y las encuestas del Discord llegan a la Home con su formato. Ves cómo van las votaciones y votas en Discord con un clic.</p>
+        </header>
+
+        <div class="app reveal" inert aria-hidden="true">
+            <div class="window-bar">
+                <span class="window-title">KB MC Launcher</span>
+                <span class="window-controls"><i></i><i></i><i></i></span>
+            </div>
+
+            <div class="app-body">
+                <aside class="app-rail">
+                    <span class="app-pack">CtE</span>
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>
+                </aside>
+
+                <div class="app-main">
+                    <div class="app-title">
+                        <span id="app-date">domingo, 1 de noviembre</span>
+                        <strong id="app-greeting">Buenas tardes, Steve</strong>
+                    </div>
+
+                    <div class="app-feature">
+                        <div class="app-feature-text">
+                            <span>Continuar jugando · hace 2 horas</span>
+                            <strong>Craft to Exile 2</strong>
+                            <p>RPG modpack con VR Support</p>
+                            <div class="app-tags"><i>MC 1.20.1</i><i>Forge 47.4.10</i><i>Instalado</i></div>
+                            <div class="app-actions"><b>Jugar</b><em>Ver detalles</em></div>
+                        </div>
+                    </div>
+
+                    <div class="app-stats">
+                        <div><span>Modpacks</span><strong>1 de 2 instalados</strong><small>Todo al día</small></div>
+                        <div><span>Memoria</span><strong>16.0 GB en total</strong><small>8.0 GB recomendados para MC</small></div>
+                        <div><span>Última partida</span><strong>hace 2 horas</strong><small id="app-version">Launcher v1.6.0</small></div>
+                    </div>
+                </div>
+
+                <aside class="app-side">
+                    <div class="app-news">
+                        <h3>Noticias</h3>
+
+                        <article class="news-item">
+                            <span class="news-avatar">KB</span>
+                            <div>
+                                <div class="news-meta"><strong>KB Servers</strong><span>hace 3 horas</span><em>Ver en Discord</em></div>
+                                <p class="news-heading">Nueva temporada a la vista</p>
+                                <p>Estamos preparando el <b>siguiente modpack</b>. Decidid vosotros con cuál empezamos.</p>
+
+                                <div class="poll" id="poll">
+                                    <span class="poll-question">¿Qué modpack queréis?</span>
+                                    <div class="poll-answer" data-votes="24"><i></i><span>Craft to Exile 2</span><small></small></div>
+                                    <div class="poll-answer" data-votes="15"><i></i><span>Create</span><small></small></div>
+                                    <div class="poll-answer" data-votes="6"><i></i><span>Vanilla con mejoras</span><small></small></div>
+                                    <div class="poll-foot"><span><span id="poll-total">45</span> votos · Finaliza el viernes</span><b>Votar en Discord</b></div>
+                                </div>
+                            </div>
+                        </article>
+
+                        <article class="news-item">
+                            <span class="news-avatar">KB</span>
+                            <div>
+                                <div class="news-meta"><strong>KB Servers</strong><span>ayer</span></div>
+                                <p>Servidor actualizado. Reinicia el launcher y dale a <code>Actualizar</code>.</p>
+                            </div>
+                        </article>
+                    </div>
+                </aside>
             </div>
         </div>
+
+        <p class="app-note reveal">Vista de ejemplo. En el launcher ves las noticias reales del Discord de KB Servers.</p>
 
     </div>
 </section>
@@ -109,52 +204,76 @@
     <div class="container">
 
         <header class="section-head reveal">
-            <span class="section-index">01</span>
-            <div>
-                <h2>Qué hace por ti</h2>
-                <p>Todo lo que antes había que hacer a mano para jugar en el server, resuelto desde una sola ventana.</p>
-            </div>
+            <h2>Qué hace por ti</h2>
+            <p>Todo lo que antes había que hacer a mano para jugar en el server, resuelto desde una sola ventana.</p>
         </header>
 
-        <div class="feature-grid">
+        <div class="demo-grid">
 
-            <article class="feature reveal">
-                <div class="icon"><svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4M19 4h-4M19 4v4"/></svg></div>
-                <h3>Login con Microsoft o sin cuenta</h3>
-                <p>Inicia sesión con tu cuenta oficial, sin usuarios ni contraseñas sueltas. O crea una cuenta offline.</p>
+            <article class="demo demo-wide reveal">
+                <div class="demo-text">
+                    <h3>Consola del juego</h3>
+                    <p>Sigue el log en directo. Si el juego se cierra con error, ves el código y una pista de qué hacer.</p>
+                </div>
+                <div class="console" id="console" aria-hidden="true">
+                    <div class="console-lines" id="console-lines"></div>
+                    <div class="crash" id="console-crash">
+                        <strong>El juego se cerró inesperadamente · código 1</strong>
+                        <span>Error al cargar el juego. Revisa la consola: suele indicar el mod que falla.</span>
+                    </div>
+                </div>
             </article>
 
-            <article class="feature reveal">
-                <div class="icon"><svg viewBox="0 0 24 24"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" y1="2" x2="6" y2="4"/><line x1="10" y1="2" x2="10" y2="4"/><line x1="14" y1="2" x2="14" y2="4"/></svg></div>
-                <h3>Java sin dolores de cabeza</h3>
-                <p>Detecta e instala la versión de Java que necesita el modpack. No hay que buscar nada por tu cuenta.</p>
+            <article class="demo reveal">
+                <div class="demo-text">
+                    <h3>Modpacks anunciados</h3>
+                    <p>Un modpack puede aparecer antes de salir, con su fecha y cuenta atrás.</p>
+                </div>
+                <div class="release-demo" id="release-demo" aria-hidden="true">
+                    <div class="release-art"><span>Próximamente</span></div>
+                    <strong>Nueva temporada</strong>
+                    <button type="button" tabindex="-1" id="release-button">Disponible en 9 s</button>
+                </div>
             </article>
 
-            <article class="feature reveal">
-                <div class="icon"><svg viewBox="0 0 24 24"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></svg></div>
-                <h3>El modpack, siempre listo</h3>
-                <p>Se instala completo la primera vez y se actualiza cada vez que cambia algo en el server.</p>
+            <article class="demo reveal">
+                <div class="demo-text">
+                    <h3>Descargas que no se pierden</h3>
+                    <p>Mods y assets bajan en paralelo. Si se corta la conexión, los ficheros grandes siguen por donde iban.</p>
+                </div>
+                <div class="transfers" id="transfers" aria-hidden="true">
+                    <div class="transfer" data-speed="1.5"><span>mods.zip</span><small></small><div class="blocks"></div></div>
+                    <div class="transfer" data-speed="2.3"><span>assets</span><small></small><div class="blocks"></div></div>
+                    <div class="transfer" data-speed="1.9" data-stall="0.55"><span>overrides.zip</span><small></small><div class="blocks"></div></div>
+                    <div class="transfer" data-speed="2.8"><span>libraries</span><small></small><div class="blocks"></div></div>
+                </div>
             </article>
 
-            <article class="feature reveal">
-                <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 2v6.5l4-2M12 8.5l-4-2M12 8.5v7M8 6.5v11l4 2 4-2v-11"/></svg></div>
-                <h3>Descargas en paralelo</h3>
-                <p>Baja mods y assets a la vez para que no te comas una espera eterna antes de entrar.</p>
-            </article>
-
-            <article class="feature reveal">
-                <div class="icon"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg></div>
-                <h3>Actualizaciones automáticas</h3>
-                <p>El propio launcher se actualiza, así que siempre tienes la última versión.</p>
-            </article>
-
-            <article class="feature reveal">
-                <div class="icon"><svg viewBox="0 0 24 24"><path d="M8.5 12.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2ZM15.5 12.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor" stroke="none"/><path d="M18.5 7.5c1.2 1.7 1.9 4 1.9 6.4 0 .4 0 .8-.1 1.2-1.6 1.2-3.4 1.9-5.3 2.1l-.6-1.1c1-.3 1.9-.7 2.7-1.3-.8.4-1.7.7-2.6.9a12 12 0 0 1-5 0c-.9-.2-1.8-.5-2.6-.9.8.6 1.7 1 2.7 1.3l-.6 1.1c-1.9-.2-3.7-.9-5.3-2.1-.1-.4-.1-.8-.1-1.2 0-2.4.7-4.7 1.9-6.4C6.8 6.6 8.4 6.1 10 6l.5 1c.7-.1 1.3-.1 2 0l.5-1c1.6.1 3.2.6 4.5 1.5Z"/></svg></div>
-                <h3>Pensado para KB Servers</h3>
-                <p>Hecho a medida para nuestra comunidad de Discord, no es un launcher genérico.</p>
+            <article class="demo demo-wide reveal">
+                <div class="demo-text">
+                    <h3>Java sin dolores de cabeza</h3>
+                    <p>Descarga de Eclipse Temurin la versión que pide cada Minecraft y comprueba su SHA-256.</p>
+                </div>
+                <ul class="java" id="java" aria-hidden="true">
+                    <li><span>Minecraft 1.12.2</span><b>Java 8</b></li>
+                    <li><span>Minecraft 1.20.1</span><b>Java 17</b></li>
+                    <li><span>Minecraft 1.21</span><b>Java 21</b></li>
+                    <li><span>Minecraft 26.x</span><b>Java 25</b></li>
+                </ul>
             </article>
 
         </div>
+
+        <ul class="feature-list">
+            <li class="reveal"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15 19 4M19 4h-4M19 4v4"/></svg><div><h3>Login con Microsoft o sin cuenta</h3><p>Tu cuenta oficial en el navegador, u offline si no tienes.</p></div></li>
+            <li class="reveal"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><div><h3>Sesión cifrada</h3><p>Los tokens se guardan cifrados, con la clave en el llavero del sistema.</p></div></li>
+            <li class="reveal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6Z"/><path d="m9 12 2 2 4-4"/></svg><div><h3>Actualizaciones seguras</h3><p>Lo nuevo se prepara aparte. Si algo falla, tu modpack sigue jugable.</p></div></li>
+            <li class="reveal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></svg><div><h3>Vanilla, Fabric, Forge y NeoForge</h3><p>Desde Minecraft 1.12.2 hasta la numeración 26.x.</p></div></li>
+            <li class="reveal"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="10" rx="1"/><path d="M6 11v2M10 11v2M14 11v2M18 11v2"/></svg><div><h3>Memoria a medida</h3><p>RAM y flags de Java calculados según tu equipo.</p></div></li>
+            <li class="reveal"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><div><h3>Horas jugadas</h3><p>Historial de partidas y tiempo total de cada modpack.</p></div></li>
+            <li class="reveal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 0-15.74-6.26L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 15.74 6.26L21 16"/><path d="M16 16h5v5"/></svg><div><h3>Se actualiza solo</h3><p>El launcher instala sus propias versiones nuevas.</p></div></li>
+            <li class="reveal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></svg><div><h3>Pensado para KB Servers</h3><p>Hecho a medida para nuestra comunidad de Discord.</p></div></li>
+        </ul>
 
     </div>
 </section>
@@ -163,18 +282,17 @@
     <div class="container">
 
         <header class="section-head reveal">
-            <span class="section-index">02</span>
-            <div>
-                <h2>Cómo funciona</h2>
-                <p>De cero a dentro del server en cuatro pasos.</p>
-            </div>
+            <h2>Cómo funciona</h2>
+            <p>De cero a dentro del server en cuatro pasos.</p>
         </header>
 
-        <ol class="steps">
+        <div class="steps-wrap">
+            <div class="steps-rail" id="steps-rail" aria-hidden="true"><i></i></div>
+            <ol class="steps">
 
             <li class="step reveal">
                 <div class="step-text">
-                    <span class="step-num">Paso 01</span>
+                    <span class="step-num">Paso 1</span>
                     <h3>Inicia sesión</h3>
                     <p>Con tu cuenta de Microsoft, en un par de clics. O juega sin cuenta.</p>
                 </div>
@@ -185,9 +303,9 @@
                 </div>
             </li>
 
-            <li class="step reverse reveal">
+            <li class="step reveal">
                 <div class="step-text">
-                    <span class="step-num">Paso 02</span>
+                    <span class="step-num">Paso 2</span>
                     <h3>Instala el modpack</h3>
                     <p>Se descarga y se prepara solo, sin pasos extra.</p>
                 </div>
@@ -200,9 +318,9 @@
 
             <li class="step reveal">
                 <div class="step-text">
-                    <span class="step-num">Paso 03</span>
+                    <span class="step-num">Paso 3</span>
                     <h3>Entra al server</h3>
-                    <p>Dale a jugar y estás dentro. El resto lo lleva el launcher.</p>
+                    <p>Dale a Jugar y estás dentro. El resto lo lleva el launcher.</p>
                 </div>
                 <div class="step-media">
                     <video loop muted playsinline preload="metadata" aria-label="Descarga y arranque del juego">
@@ -211,9 +329,9 @@
                 </div>
             </li>
 
-            <li class="step reverse reveal">
+            <li class="step reveal">
                 <div class="step-text">
-                    <span class="step-num">Paso 04</span>
+                    <span class="step-num">Paso 4</span>
                     <h3>Ajusta lo que quieras</h3>
                     <p>RAM, resolución y opciones del launcher a tu gusto.</p>
                 </div>
@@ -225,6 +343,7 @@
             </li>
 
         </ol>
+        </div>
 
     </div>
 </section>
@@ -233,11 +352,8 @@
     <div class="container">
 
         <header class="section-head reveal">
-            <span class="section-index">03</span>
-            <div>
-                <h2>Descarga</h2>
-                <p>Elige tu sistema. Una vez instalado, el launcher se mantiene actualizado solo.</p>
-            </div>
+            <h2>Descarga</h2>
+            <p>Elige tu sistema. Una vez instalado, el launcher se mantiene actualizado solo.</p>
         </header>
 
         <div class="platform-grid">
@@ -352,7 +468,8 @@
     </div>
 </footer>
 
-<script src="script.js?v=3" defer></script>
+<script src="world.js?v=4" defer></script>
+<script src="script.js?v=4" defer></script>
 
 </body>
 </html>
