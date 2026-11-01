@@ -35,6 +35,8 @@ export const home = {
   side: {
     position: 'sticky',
     top: '36px',
+    // Cabe en la ventana: lo que sobra lo desplazan las noticias, que van las últimas
+    maxHeight: 'calc(100vh - 68px)',
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',

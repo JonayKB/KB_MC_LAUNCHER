@@ -4,6 +4,7 @@ type S = React.CSSProperties;
 export const discordCard = {
     wrap: (bannerUrl: string | null): S => ({
         width: '100%',
+        flexShrink: 0,
         borderRadius: 'var(--radius-xl)',
         border: '1px solid var(--border)',
         overflow: 'hidden',
@@ -124,6 +125,7 @@ export const discordCard = {
 export const discordSkeleton = {
     wrap: {
         width: '100%',
+        flexShrink: 0,
         borderRadius: 'var(--radius-xl)',
         border: '1px solid var(--border)',
         overflow: 'hidden',
