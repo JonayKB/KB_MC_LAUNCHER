@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { open } from '@tauri-apps/plugin-shell';
 import { home } from "../styles/homeStyles";
 import { useUser } from "../context/UserContext";
 import { useInstall } from "../context/InstallContext";
@@ -16,7 +15,6 @@ import type { RecommendedSettings } from "../types/modpackSettings";
 import DiscordCard from "../components/DiscordCard";
 import NewsPanel from "../components/NewsPanel";
 
-const GITHUB_ISSUES_URL = 'https://github.com/jonaykb/KB_MC_LAUNCHER/issues';
 
 const STATUS_LABELS: Record<ModpackStatus, string> = {
     'installed': 'Instalado',
@@ -216,20 +214,6 @@ function ModpackCard({ item, now, onOpen }: Readonly<{ item: ModpackOverview; no
     );
 }
 
-function QuickLink({ icon, label, onClick }: Readonly<{ icon: React.ReactNode; label: string; onClick: () => void }>) {
-    const [hovered, setHovered] = useState(false);
-    return (
-        <button
-            style={home.linkRow(hovered)}
-            onMouseEnter={() => setHovered(true)}
-            onMouseLeave={() => setHovered(false)}
-            onClick={onClick}
-        >
-            <span style={{ display: 'flex', color: 'var(--text-faint)' }}>{icon}</span>
-            {label}
-        </button>
-    );
-}
 
 const icon = (d: React.ReactNode) => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{d}</svg>
