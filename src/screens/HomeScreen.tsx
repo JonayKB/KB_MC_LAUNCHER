@@ -10,7 +10,7 @@ import { ModpackOverview, ModpackStatus, useModpackOverview } from "../hooks/use
 import { useGameRunning } from "../hooks/useGameRunning";
 import { ensureModpackSettings, launchModpack } from "../repositories/ModpackActions";
 import { formatTimeAgo, getLastPlayed, getPlayHistory } from "../repositories/PlayHistory";
-import { LOADER_LABELS, formatCountdown, formatReleaseDate, nextRelease, releaseTime, resolveLoader } from "../types/modpack";
+import { LOADER_LABELS, endTime, formatCountdown, formatReleaseDate, isEnded, nextDeadline, releaseTime, resolveLoader } from "../types/modpack";
 import { useNow } from "../hooks/useNow";
 import type { RecommendedSettings } from "../types/modpackSettings";
 import DiscordCard from "../components/DiscordCard";
@@ -55,8 +55,10 @@ function HeroCard({ item, lastPlayedAt }: Readonly<{ item: ModpackOverview; last
     const { entry, latest, status } = item;
     const releaseAt = releaseTime(entry);
     // Cada segundo, para la cuenta atrás del botón
-    const now = useNow(releaseAt, true);
-    const upcoming = releaseAt !== null && releaseAt > now;
+    const now = useNow(nextDeadline([entry]), true);
+    const endAt = endTime(entry);
+    const ended = endAt !== null && endAt <= now;
+    const upcoming = !ended && releaseAt !== null && releaseAt > now;
     const installingThis = isInstalling && job?.modpackId === latest?.modpackId;
     const image = latest?.images?.[0] ?? entry.imageUrl;
     const loader = latest ? resolveLoader(latest) : null;
@@ -95,10 +97,11 @@ function HeroCard({ item, lastPlayedAt }: Readonly<{ item: ModpackOverview; last
 
     let eyebrow = lastPlayedAt ? `Continuar jugando · ${formatTimeAgo(lastPlayedAt)}` : 'Modpack destacado';
     if (upcoming) eyebrow = `Próximamente · ${formatReleaseDate(releaseAt)}`;
+    if (ended) eyebrow = `Servidor terminado · ${formatReleaseDate(endAt)}`;
 
     return (
         <section style={home.hero(image)}>
-            {upcoming && <div style={home.upcomingVeil} />}
+            {(upcoming || ended) && <div style={home.upcomingVeil} />}
             <div style={home.heroContent}>
                 <span style={home.heroEyebrow}>{eyebrow}</span>
                 <h2 style={home.heroTitle}>{entry.name}</h2>
@@ -159,7 +162,9 @@ function ModpackCard({ item, now, onOpen }: Readonly<{ item: ModpackOverview; no
     const [hovered, setHovered] = useState(false);
     const { entry, latest, status } = item;
     const releaseAt = releaseTime(entry);
-    const upcoming = releaseAt !== null && releaseAt > now;
+    const endAt = endTime(entry);
+    const ended = endAt !== null && endAt <= now;
+    const upcoming = !ended && releaseAt !== null && releaseAt > now;
     const loader = latest ? resolveLoader(latest) : null;
     return (
         <button
@@ -169,12 +174,16 @@ function ModpackCard({ item, now, onOpen }: Readonly<{ item: ModpackOverview; no
             onClick={onOpen}
         >
             <div style={home.cardImage(entry.imageUrl ?? latest?.images?.[0])}>
-                {upcoming ? (
+                {upcoming || ended ? (
                     <>
                         <div style={home.upcomingVeil} />
                         <span style={home.upcomingBadge}>
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
-                            Próximamente
+                            {ended ? (
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22V4h14l-3 4 3 4H4" /></svg>
+                            ) : (
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+                            )}
+                            {ended ? 'Terminado' : 'Próximamente'}
                         </span>
                     </>
                 ) : (
@@ -194,6 +203,11 @@ function ModpackCard({ item, now, onOpen }: Readonly<{ item: ModpackOverview; no
                 {upcoming && (
                     <span style={home.releaseLine}>
                         Disponible el {formatReleaseDate(releaseAt)} · <span style={home.countdown}>en {formatCountdown(releaseAt - now)}</span>
+                    </span>
+                )}
+                {ended && (
+                    <span style={home.releaseLine}>
+                        Servidor cerrado el {formatReleaseDate(endAt)} · {STATUS_LABELS[status]}
                     </span>
                 )}
                 {entry.description && <span style={home.cardDesc}>{entry.description}</span>}
@@ -238,16 +252,23 @@ export default function HomeScreen() {
     }, []);
 
     const lastPlayedId = getLastPlayed(history);
-    const now = useNow(items ? nextRelease(items.map(i => i.entry)) : null);
+    const now = useNow(items ? nextDeadline(items.map(i => i.entry)) : null);
     const featured = useMemo(() => {
         if (!items || items.length === 0) return null;
-        const released = items.filter(i => (releaseTime(i.entry) ?? 0) <= now);
-        // Un modpack aún no lanzado solo se destaca si no hay ninguno disponible
+        const active = items.filter(i => !isEnded(i.entry, now));
+        const released = active.filter(i => (releaseTime(i.entry) ?? 0) <= now);
+        // Un modpack aún no lanzado o terminado solo se destaca si no hay ninguno disponible
         return released.find(i => i.entry.id === lastPlayedId || i.latest?.modpackId === lastPlayedId)
             ?? released.find(i => i.status === 'update-available')
             ?? released[0]
+            ?? active[0]
             ?? items[0];
     }, [items, lastPlayedId, now]);
+    // Los terminados, al final de la lista
+    const sortedItems = useMemo(
+        () => items && [...items].sort((a, b) => Number(isEnded(a.entry, now)) - Number(isEnded(b.entry, now))),
+        [items, now],
+    );
     const featuredLastPlayed = featured
         ? history[featured.latest?.modpackId ?? featured.entry.id] ?? history[featured.entry.id]
         : undefined;
@@ -314,9 +335,9 @@ export default function HomeScreen() {
                         <div style={home.grid}>
                             {[0, 1, 2].map(i => <div key={i} style={home.skeletonCard(i)} />)}
                         </div>
-                    ) : items && items.length > 0 ? (
+                    ) : sortedItems && sortedItems.length > 0 ? (
                         <div style={home.grid}>
-                            {items.map(item => (
+                            {sortedItems.map(item => (
                                 <ModpackCard key={item.entry.id} item={item} now={now} onOpen={() => openModpack(navigate, item)} />
                             ))}
                         </div>

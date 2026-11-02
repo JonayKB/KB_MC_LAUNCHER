@@ -73,6 +73,18 @@ export const detail = {
         padding: '4px 10px',
     } as S,
 
+    endedNotice: {
+        fontSize: '13px',
+        lineHeight: 1.45,
+        color: 'rgba(255,255,255,0.8)',
+        background: 'rgba(8,8,9,0.6)',
+        border: '1px solid rgba(255,255,255,0.12)',
+        borderLeft: '3px solid var(--warning)',
+        borderRadius: 'var(--radius-md)',
+        padding: '10px 12px',
+        backdropFilter: 'blur(6px)',
+    } as S,
+
     playtimeBox: {
         display: 'flex',
         flexDirection: 'column',

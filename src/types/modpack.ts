@@ -8,6 +8,11 @@ export interface ModpackEntry {
      * p. ej. "2026-11-15T18:00:00+01:00". Sin ella, ya está disponible.
      */
     release_date?: string;
+    /**
+     * Fecha y hora ISO 8601 en que se cerró (o se cerrará) el servidor. A partir
+     * de ella se muestra como terminado, pero se puede seguir instalando y jugando.
+     */
+    end_date?: string;
 }
 
 export interface ModpackIndex {
@@ -51,18 +56,29 @@ export function resolveLoader(m: ModpackVersion): { loader: ModLoader; loaderVer
  * Una fecha mal escrita no bloquea el modpack: se avisa en consola y se abre.
  */
 export function releaseTime(entry: Pick<ModpackEntry, 'id' | 'release_date'>): number | null {
-    if (!entry.release_date) return null;
-    const t = Date.parse(entry.release_date);
+    return parseEntryDate(entry.id, 'release_date', entry.release_date);
+}
+
+/** Momento (epoch ms) en que se cierra el servidor, o null si no tiene fin previsto */
+export function endTime(entry: Pick<ModpackEntry, 'id' | 'end_date'>): number | null {
+    return parseEntryDate(entry.id, 'end_date', entry.end_date);
+}
+
+function parseEntryDate(id: string, field: string, value?: string): number | null {
+    if (!value) return null;
+    const t = Date.parse(value);
     if (Number.isNaN(t)) {
-        console.warn(`[modpack] release_date inválida en "${entry.id}": ${entry.release_date}`);
+        console.warn(`[modpack] ${field} inválida en "${id}": ${value}`);
         return null;
     }
     return t;
 }
 
-/** Próximo lanzamiento pendiente entre varios modpacks, o null si no queda ninguno */
-export function nextRelease(entries: Pick<ModpackEntry, 'id' | 'release_date'>[], now = Date.now()): number | null {
-    const future = entries.map(releaseTime).filter((t): t is number => t !== null && t > now);
+/** Próximo lanzamiento o cierre pendiente entre varios modpacks, o null si no queda ninguno */
+export function nextDeadline(entries: Pick<ModpackEntry, 'id' | 'release_date' | 'end_date'>[], now = Date.now()): number | null {
+    const future = entries
+        .flatMap(e => [releaseTime(e), endTime(e)])
+        .filter((t): t is number => t !== null && t > now);
     return future.length ? Math.min(...future) : null;
 }
 
@@ -70,6 +86,12 @@ export function nextRelease(entries: Pick<ModpackEntry, 'id' | 'release_date'>[]
 export function isUpcoming(entry: Pick<ModpackEntry, 'id' | 'release_date'>, now = Date.now()): boolean {
     const t = releaseTime(entry);
     return t !== null && t > now;
+}
+
+/** Si el servidor del modpack ya se ha dado por terminado */
+export function isEnded(entry: Pick<ModpackEntry, 'id' | 'end_date'>, now = Date.now()): boolean {
+    const t = endTime(entry);
+    return t !== null && t <= now;
 }
 
 /** "15 nov, 18:00" (con año si no es el actual), en la hora local del jugador */

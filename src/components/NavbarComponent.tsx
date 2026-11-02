@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ModpackEntry, ModpackIndex } from "../types";
-import { formatReleaseDate, nextRelease, releaseTime } from "../types/modpack";
+import { formatReleaseDate, isEnded, nextDeadline, releaseTime } from "../types/modpack";
 import { useNow } from "../hooks/useNow";
 import { fetchModpackIndex } from "../repositories/ModpackRepository";
 import { navbar, item, settings } from "../styles/navbarStyles";
@@ -74,8 +74,8 @@ export default function NavbarComponent() {
         fetchData();
     }, [reloadKey]);
 
-    // Se vuelve a pintar al llegar la fecha de lanzamiento para desbloquear el icono
-    const now = useNow(nextRelease(modpacks));
+    // Se vuelve a pintar al llegar una fecha de lanzamiento o cierre para cambiar el icono
+    const now = useNow(nextDeadline(modpacks));
 
     return (
         <nav
@@ -125,7 +125,11 @@ export default function NavbarComponent() {
                     modpacks.map((modpack: ModpackEntry) => {
                         const isActive = location.pathname === `/modpacks/${modpack.id}`;
                         const releaseAt = releaseTime(modpack);
-                        const upcoming = releaseAt !== null && releaseAt > now;
+                        const ended = isEnded(modpack, now);
+                        const upcoming = !ended && releaseAt !== null && releaseAt > now;
+                        let title = modpack.name;
+                        if (ended) title = `${modpack.name} · servidor terminado`;
+                        else if (upcoming) title = `${modpack.name} · disponible el ${formatReleaseDate(releaseAt)}`;
                         return (
                             <a
                                 key={modpack.id}
@@ -133,16 +137,20 @@ export default function NavbarComponent() {
                                     ? () => navigate('')
                                     : () => navigate(`/modpacks/${modpack.id}`, { state: { name: modpack.name } })
                                 }
-                                title={upcoming ? `${modpack.name} · disponible el ${formatReleaseDate(releaseAt)}` : modpack.name}
+                                title={title}
                                 style={item.link(hoveredId === modpack.id, isActive)}
                                 onMouseEnter={() => setHoveredId(modpack.id)}
                                 onMouseLeave={() => setHoveredId(null)}
                             >
                                 <span style={item.thumbWrap}>
-                                    <img src={modpack.imageUrl} alt={modpack.name} style={{ ...item.thumb(isActive), ...(upcoming ? item.thumbUpcoming : {}) }} />
-                                    {upcoming && (
+                                    <img src={modpack.imageUrl} alt={modpack.name} style={{ ...item.thumb(isActive), ...(upcoming || ended ? item.thumbUpcoming : {}) }} />
+                                    {(upcoming || ended) && (
                                         <span style={item.lockBadge} aria-hidden>
-                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+                                            {ended ? (
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22V4h14l-3 4 3 4H4" /></svg>
+                                            ) : (
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+                                            )}
                                         </span>
                                     )}
                                 </span>
@@ -150,6 +158,9 @@ export default function NavbarComponent() {
                                     <span style={item.name(expanded, isActive)}>{modpack.name}</span>
                                     {upcoming && expanded && (
                                         <span style={item.releaseHint}>Disponible el {formatReleaseDate(releaseAt)}</span>
+                                    )}
+                                    {ended && expanded && (
+                                        <span style={item.releaseHint}>Servidor terminado</span>
                                     )}
                                 </span>
                             </a>
