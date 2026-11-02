@@ -42,6 +42,34 @@ function detectOS() {
     return null;
 }
 
+// El navegador no expone la distro: solo aparece si su build la pone en el
+// User-Agent (Chrome nunca lo hace). Sin coincidencia, se deja elegir.
+const LINUX_DISTROS = [
+    { name: "Ubuntu", format: "deb", pattern: /\bubuntu\b/i },
+    { name: "Linux Mint", format: "deb", pattern: /\bmint\b/i },
+    { name: "Pop!_OS", format: "deb", pattern: /\bpop!?_?os\b/i },
+    { name: "Debian", format: "deb", pattern: /\bdebian\b/i },
+    { name: "Fedora", format: "rpm", pattern: /\bfedora\b/i },
+    { name: "openSUSE", format: "rpm", pattern: /\b(open)?suse\b/i },
+    { name: "Red Hat", format: "rpm", pattern: /\b(red ?hat|rhel)\b/i },
+    { name: "Rocky Linux", format: "rpm", pattern: /\brocky\b/i },
+    { name: "AlmaLinux", format: "rpm", pattern: /\balma(linux)?\b/i },
+    { name: "CentOS", format: "rpm", pattern: /\bcentos\b/i }
+];
+
+function detectLinuxDistro() {
+    return LINUX_DISTROS.find(distro => distro.pattern.test(navigator.userAgent)) || null;
+}
+
+// Pone el paquete de la distro el primero y como botón principal.
+function recommendLinuxPackage(card, distro) {
+    const link = card.querySelector(`.download-btn[data-format="${distro.format}"]`);
+    link.classList.remove("download-btn-secondary");
+    link.querySelector(".download-hint").textContent = `Recomendado para ${distro.name}`;
+    link.parentElement.prepend(link);
+    return link;
+}
+
 function highlightPlatform() {
     const os = detectOS();
     if (!os) return;
@@ -54,8 +82,16 @@ function highlightPlatform() {
     const label = document.getElementById("hero-download-label");
     label.textContent = os === "windows" ? "Descargar para Windows" : "Descargar para Linux";
 
+    let primaryLink = card.querySelector(".download-btn");
+    if (os === "linux") {
+        const distro = detectLinuxDistro();
+        // Sin distro conocida no hay descarga por defecto: el hero lleva a elegir formato.
+        if (!distro) return;
+        label.textContent = `Descargar para ${distro.name}`;
+        primaryLink = recommendLinuxPackage(card, distro);
+    }
+
     // En el hero, el botón descarga directamente el instalador principal.
-    const primaryLink = card.querySelector(".download-btn");
     const heroButton = document.getElementById("hero-download");
     heroButton.href = primaryLink.href;
     heroButton.dataset.direct = "true";
@@ -445,13 +481,15 @@ async function loadReleaseInfo() {
             "x64-setup.exe": 'a[href*="x64-setup.exe"]',
             ".msi": 'a[href*=".msi"]',
             "AppImage": 'a[href*="AppImage"]',
-            ".deb": 'a[href*=".deb"]'
+            ".deb": 'a[href*=".deb"]',
+            ".rpm": 'a[href*=".rpm"]'
         };
 
         let installerCount = 0;
 
         for (const [pattern, selector] of Object.entries(linkByPattern)) {
-            const asset = assets.find(a => a.name.includes(pattern));
+            // endsWith: cada instalador viene acompañado de su .sig.
+            const asset = assets.find(a => a.name.endsWith(pattern));
             if (!asset) continue;
 
             installerCount++;
