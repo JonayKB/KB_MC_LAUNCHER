@@ -43,7 +43,7 @@ jobs:
       matrix:
         include:
           - platform: linux
-            args: '--bundles deb,appimage'
+            args: '--bundles deb,rpm,appimage'
             runner: ubuntu-latest
           - platform: windows
             args: '--bundles nsis,msi'
