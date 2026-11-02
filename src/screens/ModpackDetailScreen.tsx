@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
-import { ModpackEntry, ModpackVersion, LOADER_LABELS, formatCountdown, formatReleaseDate, releaseTime, resolveLoader } from "../types/modpack";
+import { ModpackEntry, ModpackVersion, LOADER_LABELS, endTime, formatCountdown, formatReleaseDate, nextDeadline, releaseTime, resolveLoader } from "../types/modpack";
 import { fetchModpackIndex, fetchModpackVersion } from "../repositories/ModpackRepository";
 import { useNow } from "../hooks/useNow";
 import { detail, loading } from "../styles/modpackDetailStyles";
@@ -38,7 +38,7 @@ export default function ModpackDetailScreen() {
     const playing = useGameRunning(modpack?.modpackId);
     const playtime = usePlaytime(modpack?.modpackId);
     const [historyOpen, setHistoryOpen] = useState(false);
-    // La fecha de lanzamiento viene en index.json (latest.json no la trae)
+    // Las fechas de lanzamiento y cierre vienen en index.json (latest.json no las trae)
     const [entry, setEntry] = useState<ModpackEntry | null>(null);
     const [indexChecked, setIndexChecked] = useState(false);
     useEffect(() => {
@@ -50,8 +50,10 @@ export default function ModpackDetailScreen() {
             .finally(() => setIndexChecked(true));
     }, [id]);
     const releaseAt = entry ? releaseTime(entry) : null;
-    const now = useNow(releaseAt, true);
-    const upcoming = releaseAt !== null && releaseAt > now;
+    const now = useNow(entry ? nextDeadline([entry]) : null, true);
+    const endAt = entry ? endTime(entry) : null;
+    const ended = endAt !== null && endAt <= now;
+    const upcoming = !ended && releaseAt !== null && releaseAt > now;
     // Fetch modpack data
     useEffect(() => {
         if (!id) return;
@@ -298,12 +300,23 @@ export default function ModpackDetailScreen() {
                                         Lanzamiento: {formatReleaseDate(releaseAt)}
                                     </span>
                                 )}
+                                {ended && (
+                                    <span style={{ ...detail.metaTag, color: 'var(--warning)' }}>
+                                        Terminado: {formatReleaseDate(endAt)}
+                                    </span>
+                                )}
                                 {needsUpdate && (
                                     <span style={{ ...detail.metaTag, color: 'var(--warning)' }}>
                                         Instalada v{installedVersion}
                                     </span>
                                 )}
                             </div>
+                            {ended && (
+                                <div style={detail.endedNotice} role="status">
+                                    <strong style={{ color: '#fff' }}>Este servidor ya está cerrado.</strong>{' '}
+                                    Puedes instalar y jugar el modpack, pero ya no podrás conectarte al servidor.
+                                </div>
+                            )}
                             {playtime && playtime.sessionCount > 0 && (
                                 <div style={detail.playtimeBox}>
                                     <button style={detail.playtimeSummary} onClick={() => setHistoryOpen(v => !v)}>

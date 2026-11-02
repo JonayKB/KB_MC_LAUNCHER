@@ -154,6 +154,8 @@ The modpack list lives in `index.json`. An entry can set `release_date` (ISO 860
 
 This check runs on the player's clock, so it is a display gate only: don't upload the mods/overrides files until the release date if they must stay private.
 
+When a server closes, add `end_date` (same format) to its entry. From that moment it shows as finished on the home screen and moves to the end of the list; its detail screen warns that the server is closed, but the modpack can still be installed and played.
+
 `loader` can be `forge` (default), `neoforge`, `fabric` or `vanilla`. `loaderVersion` is required except for `vanilla`. Older files that only set `forgeVersion` keep working as Forge.
 
 When `version` changes, installed players get an **Update** button. Updating downloads both files first, then replaces the whole `mods/` folder and copies the overrides over the instance. It does not change Minecraft or the loader: a new `minecraftVersion` or `loaderVersion` needs a reinstall.
