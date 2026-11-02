@@ -356,21 +356,6 @@ export default function HomeScreen() {
 
             <aside style={home.side}>
                 <DiscordCard />
-                <div style={{ ...home.panel, marginTop: 0, padding: '10px', flexShrink: 0 }}>
-                    <h2 style={{ ...home.sectionTitle, padding: '6px 12px 8px' }}>Accesos rápidos</h2>
-                    {basePath && (
-                        <QuickLink
-                            icon={icon(<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />)}
-                            label="Abrir carpeta del launcher"
-                            onClick={() => invoke('open_directory', { path: basePath }).catch(console.error)}
-                        />
-                    )}
-                    <QuickLink
-                        icon={icon(<><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></>)}
-                        label="Reportar un error"
-                        onClick={() => open(GITHUB_ISSUES_URL)}
-                    />
-                </div>
                 <NewsPanel />
             </aside>
         </div>
