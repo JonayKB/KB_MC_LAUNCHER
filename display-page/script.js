@@ -42,32 +42,41 @@ function detectOS() {
     return null;
 }
 
-// El navegador no expone la distro: solo aparece si su build la pone en el
-// User-Agent (Chrome nunca lo hace). Sin coincidencia, se deja elegir.
-const LINUX_DISTROS = [
-    { name: "Ubuntu", format: "deb", pattern: /\bubuntu\b/i },
-    { name: "Linux Mint", format: "deb", pattern: /\bmint\b/i },
-    { name: "Pop!_OS", format: "deb", pattern: /\bpop!?_?os\b/i },
-    { name: "Debian", format: "deb", pattern: /\bdebian\b/i },
-    { name: "Fedora", format: "rpm", pattern: /\bfedora\b/i },
-    { name: "openSUSE", format: "rpm", pattern: /\b(open)?suse\b/i },
-    { name: "Red Hat", format: "rpm", pattern: /\b(red ?hat|rhel)\b/i },
-    { name: "Rocky Linux", format: "rpm", pattern: /\brocky\b/i },
-    { name: "AlmaLinux", format: "rpm", pattern: /\balma(linux)?\b/i },
-    { name: "CentOS", format: "rpm", pattern: /\bcentos\b/i }
-];
+// El navegador no expone la distro de forma fiable (el Firefox de Fedora manda un
+// User-Agent genérico), así que en Linux se elige el paquete en un desplegable.
+function setupLinuxDownloadMenu(card) {
+    const link = document.getElementById("hero-download");
+    const menu = document.getElementById("hero-download-menu");
 
-function detectLinuxDistro() {
-    return LINUX_DISTROS.find(distro => distro.pattern.test(navigator.userAgent)) || null;
-}
+    // Se copian de la tarjeta antes de loadReleaseInfo, que actualiza todas las URLs.
+    card.querySelectorAll(".download-btn").forEach(option => menu.append(option.cloneNode(true)));
 
-// Pone el paquete de la distro el primero y como botón principal.
-function recommendLinuxPackage(card, distro) {
-    const link = card.querySelector(`.download-btn[data-format="${distro.format}"]`);
-    link.classList.remove("download-btn-secondary");
-    link.querySelector(".download-hint").textContent = `Recomendado para ${distro.name}`;
-    link.parentElement.prepend(link);
-    return link;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = link.id;
+    button.className = link.className;
+    button.setAttribute("aria-controls", menu.id);
+    button.append(...link.childNodes);
+    link.replaceWith(button);
+
+    const setOpen = open => {
+        menu.hidden = !open;
+        button.setAttribute("aria-expanded", String(open));
+    };
+    setOpen(false);
+
+    button.addEventListener("click", () => setOpen(menu.hidden));
+    menu.addEventListener("click", event => {
+        if (event.target.closest("a")) setOpen(false);
+    });
+    document.addEventListener("click", event => {
+        if (!event.target.closest(".hero-download")) setOpen(false);
+    });
+    document.addEventListener("keydown", event => {
+        if (event.key !== "Escape" || menu.hidden) return;
+        setOpen(false);
+        button.focus();
+    });
 }
 
 function highlightPlatform() {
@@ -82,19 +91,13 @@ function highlightPlatform() {
     const label = document.getElementById("hero-download-label");
     label.textContent = os === "windows" ? "Descargar para Windows" : "Descargar para Linux";
 
-    let primaryLink = card.querySelector(".download-btn");
     if (os === "linux") {
-        const distro = detectLinuxDistro();
-        // Sin distro conocida no hay descarga por defecto: el hero lleva a elegir formato.
-        if (!distro) return;
-        label.textContent = `Descargar para ${distro.name}`;
-        primaryLink = recommendLinuxPackage(card, distro);
+        setupLinuxDownloadMenu(card);
+        return;
     }
 
-    // En el hero, el botón descarga directamente el instalador principal.
-    const heroButton = document.getElementById("hero-download");
-    heroButton.href = primaryLink.href;
-    heroButton.dataset.direct = "true";
+    // En Windows, el botón del hero descarga directamente el instalador principal.
+    document.getElementById("hero-download").href = card.querySelector(".download-btn").href;
 }
 
 /* ── Header ──────────────────────────────────────────────────── */
