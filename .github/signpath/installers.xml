@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Configuración de artefacto de SignPath (slug: "installers").
+  SignPath no la lee del repo: hay que pegarla en
+  Project > Artifact configurations > installers > Edit.
+
+  El artefacto lo sube el workflow de release (artefacto "windows-unsigned")
+  con nombres fijos para que esta configuración no dependa de la versión.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="KB-MC-Launcher-setup.exe">
+      <authenticode-sign />
+    </pe-file>
+    <msi-file path="KB-MC-Launcher.msi">
+      <authenticode-sign />
+    </msi-file>
+  </zip-file>
+</artifact-configuration>

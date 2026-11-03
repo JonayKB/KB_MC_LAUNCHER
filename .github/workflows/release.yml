@@ -136,7 +136,9 @@ jobs:
       - name: Install frontend deps
         run: npm install
 
-      - name: Build and Release
+      # Linux: tauri-action compila, crea la release (borrador) y sube latest.json
+      - name: Build and Release (Linux)
+        if: matrix.platform == 'linux'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -149,3 +151,144 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Windows: se compila sin publicar, se firma con SignPath (Authenticode)
+      # y el job publish-windows sube los instaladores ya firmados.
+      - name: Build installers (Windows)
+        if: matrix.platform == 'windows'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- ${{ matrix.args }}
+
+      - name: Collect installers (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          # target/ viene de la caché y puede tener instaladores de versiones anteriores
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $bundle  = "src-tauri/target/release/bundle"
+          $nsis = Get-ChildItem "$bundle/nsis/*_${version}_x64-setup.exe"
+          $msi  = Get-ChildItem "$bundle/msi/*_${version}_x64_*.msi"
+          if ($nsis.Count -ne 1 -or $msi.Count -ne 1) {
+            throw "Se esperaba un .exe y un .msi de la versión $version (nsis: $($nsis.Count), msi: $($msi.Count))"
+          }
+          # Nombres fijos para que la configuración de artefacto de SignPath no dependa de la versión
+          New-Item -ItemType Directory -Force unsigned | Out-Null
+          Copy-Item $nsis.FullName unsigned/KB-MC-Launcher-setup.exe
+          Copy-Item $msi.FullName  unsigned/KB-MC-Launcher.msi
+          # Nombres de publicación (los mismos que ponía tauri-action: espacios -> puntos)
+          "NSIS_NAME=$($nsis.Name -replace ' ', '.')" >> $env:GITHUB_ENV
+          "MSI_NAME=$($msi.Name -replace ' ', '.')"   >> $env:GITHUB_ENV
+
+      - name: Upload unsigned installers (Windows)
+        id: upload-unsigned
+        if: matrix.platform == 'windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: unsigned/
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Sign with SignPath (Windows)
+        if: matrix.platform == 'windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'KB_MC_LAUNCHER' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG || 'installers' }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          # Con release-signing hay que aprobar la petición a mano en SignPath
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+
+      - name: Prepare release files (Windows)
+        if: matrix.platform == 'windows'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if (Test-Path signed) {
+            $src = "signed"
+          } else {
+            Write-Warning "SignPath no está configurado: se publican los instaladores SIN firmar"
+            $src = "unsigned"
+          }
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item "$src/KB-MC-Launcher-setup.exe" "release/$env:NSIS_NAME"
+          Copy-Item "$src/KB-MC-Launcher.msi"       "release/$env:MSI_NAME"
+
+          if ($src -eq "signed") {
+            foreach ($f in Get-ChildItem release/*) {
+              $sig = Get-AuthenticodeSignature $f.FullName
+              Write-Host "$($f.Name): $($sig.Status) - $($sig.SignerCertificate.Subject)"
+              if ($sig.Status -in @('NotSigned', 'HashMismatch')) { throw "$($f.Name) no quedó firmado" }
+            }
+          }
+
+          # La firma del updater (.sig) se calcula sobre el fichero final:
+          # la que generó `tauri build` ya no vale tras la firma Authenticode.
+          foreach ($f in Get-ChildItem release/*) {
+            npm run tauri signer sign -- $f.FullName
+            if ($LASTEXITCODE -ne 0) { throw "No se pudo firmar $($f.Name) para el updater" }
+          }
+          Get-ChildItem release
+
+      - name: Upload release files (Windows)
+        if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── Job 3: subir los instaladores de Windows a la release y a latest.json ──
+  # Va después de Linux para que tauri-action ya haya creado la release y su
+  # latest.json, y así no pisarse al editarlo.
+  publish-windows:
+    needs: [create-tag, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.create-tag.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release
+
+      - name: Upload Windows installers
+        run: gh release upload "$TAG" release/* --clobber
+
+      - name: Add Windows to latest.json
+        run: |
+          set -euo pipefail
+          nsis=$(cd release && ls *-setup.exe)
+          msi=$(cd release && ls *.msi)
+          base="https://github.com/$GH_REPO/releases/download/$TAG"
+
+          mkdir -p json
+          if ! gh release download "$TAG" -p latest.json -D json; then
+            echo "La release no tiene latest.json; se crea uno nuevo"
+            jq -n --arg v "${TAG#v}" --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              '{version: $v, notes: "Nueva versión", pub_date: $d, platforms: {}}' > json/latest.json
+          fi
+
+          # Mismas claves que generaba tauri-action (windows-x86_64 -> MSI)
+          jq --arg nsis_sig "$(cat "release/$nsis.sig")" --arg nsis_url "$base/$nsis" \
+             --arg msi_sig  "$(cat "release/$msi.sig")"  --arg msi_url  "$base/$msi" \
+             '.platforms += {
+                "windows-x86_64":      {signature: $msi_sig,  url: $msi_url},
+                "windows-x86_64-nsis": {signature: $nsis_sig, url: $nsis_url},
+                "windows-x86_64-msi":  {signature: $msi_sig,  url: $msi_url}
+              }' json/latest.json > json/latest.tmp
+          mv json/latest.tmp json/latest.json
+          cat json/latest.json
+          gh release upload "$TAG" json/latest.json --clobber
