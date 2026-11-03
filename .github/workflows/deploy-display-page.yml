@@ -1,0 +1,65 @@
+name: Deploy display-page
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "display-page/**"
+      - ".github/workflows/deploy-display-page.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-display-page
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SITE_URL: https://kb-launcher.jonaykb.com
+      DEPLOY_PATH: /var/www/kb-launcher
+    steps:
+      - uses: actions/checkout@v4
+
+      # Cloudflare cachea script.js/styles.css como immutable 30 días por ?v=,
+      # así que cada despliegue usa un ?v= nuevo (el commit) para forzar MISS.
+      - name: Bump cache-busting query strings
+        run: |
+          VERSION="${GITHUB_SHA::8}"
+          sed -i -E "s/\.(js|css)\?v=[A-Za-z0-9]+/.\1?v=${VERSION}/g" display-page/index.html
+          grep -n "?v=" display-page/index.html
+
+      - name: Set up SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      # assets/ (logo, captura, vídeos) solo existe en el servidor: no se toca.
+      - name: Upload files
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          rsync -rvz --checksum --exclude 'assets/' \
+            -e "ssh -i ~/.ssh/id_deploy -p ${DEPLOY_PORT:-22} -o StrictHostKeyChecking=yes" \
+            display-page/ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
+
+      - name: Verify deployment
+        run: |
+          VERSION="${GITHUB_SHA::8}"
+          for i in 1 2 3 4 5; do
+            if curl -fsS "$SITE_URL/?nocache=$RANDOM" | grep -q "script.js?v=${VERSION}"; then
+              curl -fsS -o /dev/null -D - "$SITE_URL/script.js?v=${VERSION}" | grep -iE "cf-cache-status|age:" || true
+              echo "La web sirve la versión ${VERSION}."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::La web no sirve la versión ${VERSION}."
+          exit 1
