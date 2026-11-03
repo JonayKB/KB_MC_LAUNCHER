@@ -164,21 +164,6 @@ When `version` changes, installed players get an **Update** button. Updating dow
 
 Releases are automated through GitHub Actions (`.github/workflows/release.yml`): pushes to `main` read the version from `src-tauri/tauri.conf.json`, tag the commit, and build/publish installers automatically.
 
-## Code signing policy
-
-Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
-
-The Windows installers (`.exe` and `.msi`) are built from this repository by GitHub Actions and signed through SignPath. Only binaries built from this project's own source code are signed, and every release is approved manually before it is signed.
-
-Team roles:
-
-- Committers and reviewers: [JonayKB](https://github.com/JonayKB)
-- Approvers: [JonayKB](https://github.com/JonayKB)
-
-Changes from other contributors are only merged through pull requests reviewed by a committer.
-
-Privacy: see the [privacy policy](PRIVACY.md), which lists every service the launcher connects to and why. The launcher collects no analytics or telemetry.
-
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
