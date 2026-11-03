@@ -176,6 +176,7 @@ jobs:
           New-Item -ItemType Directory -Force unsigned | Out-Null
           Copy-Item $nsis.FullName unsigned/KB-MC-Launcher-setup.exe
           Copy-Item $msi.FullName  unsigned/KB-MC-Launcher.msi
+          "APP_VERSION=$version" >> $env:GITHUB_ENV
           # Nombres de publicación (los mismos que ponía tauri-action: espacios -> puntos)
           "NSIS_NAME=$($nsis.Name -replace ' ', '.')" >> $env:GITHUB_ENV
           "MSI_NAME=$($msi.Name -replace ' ', '.')"   >> $env:GITHUB_ENV
@@ -192,7 +193,7 @@ jobs:
 
       - name: Sign with SignPath (Windows)
         if: matrix.platform == 'windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
-        uses: signpath/github-action-submit-signing-request@v2
+        uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
@@ -204,6 +205,9 @@ jobs:
           # Con release-signing hay que aprobar la petición a mano en SignPath
           wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: signed
+          # SignPath comprueba que el ProductVersion del .exe coincide con esta versión
+          parameters: |
+            version: ${{ toJSON(env.APP_VERSION) }}
 
       - name: Prepare release files (Windows)
         if: matrix.platform == 'windows'
