@@ -85,47 +85,6 @@ export const detail = {
         backdropFilter: 'blur(6px)',
     } as S,
 
-    playtimeBox: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px',
-        alignItems: 'flex-start',
-    } as S,
-
-    playtimeSummary: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '6px',
-        fontSize: '13px',
-        color: 'rgba(255,255,255,0.8)',
-        background: 'none',
-        border: 'none',
-        padding: 0,
-        cursor: 'pointer',
-    } as S,
-
-    sessionList: {
-        listStyle: 'none',
-        margin: 0,
-        padding: '8px 12px',
-        minWidth: '280px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '4px',
-        background: 'rgba(8,8,9,0.6)',
-        border: '1px solid rgba(255,255,255,0.12)',
-        borderRadius: 'var(--radius-md)',
-        backdropFilter: 'blur(6px)',
-    } as S,
-
-    sessionRow: {
-        display: 'flex',
-        justifyContent: 'space-between',
-        gap: '16px',
-        fontSize: '12px',
-        color: 'rgba(255,255,255,0.8)',
-    } as S,
-
     actionsCol: {
         display: 'flex',
         alignItems: 'center',
@@ -220,6 +179,192 @@ export const detail = {
     loadingText: {
         color: 'var(--text-muted)',
         fontSize: '16px',
+    } as S,
+} as const;
+
+/** Servidor del modpack y progreso del jugador (cristal oscuro, como endedNotice) */
+const glass: S = {
+    background: 'rgba(8,8,9,0.6)',
+    border: '1px solid rgba(255,255,255,0.12)',
+    borderRadius: 'var(--radius-md)',
+    backdropFilter: 'blur(6px)',
+};
+
+export const server = {
+    strip: {
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: '8px',
+        fontSize: '13px',
+        color: 'rgba(255,255,255,0.8)',
+    } as S,
+
+    dot: (online: boolean): S => ({
+        width: '8px',
+        height: '8px',
+        borderRadius: '50%',
+        flexShrink: 0,
+        background: online ? 'var(--success)' : 'rgba(255,255,255,0.35)',
+        boxShadow: online ? '0 0 0 3px rgba(34,197,94,0.18)' : 'none',
+    }),
+
+    strong: { color: '#fff' } as S,
+
+    dim: { opacity: 0.6 } as S,
+
+    sep: { opacity: 0.35 } as S,
+
+    lag: { color: 'var(--warning)' } as S,
+
+    linkBtn: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '5px',
+        font: 'inherit',
+        color: 'rgba(255,255,255,0.8)',
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        cursor: 'pointer',
+        textDecoration: 'underline',
+        textDecorationColor: 'rgba(255,255,255,0.25)',
+        textUnderlineOffset: '3px',
+    } as S,
+
+    progress: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+        alignItems: 'flex-start',
+    } as S,
+
+    summary: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        fontSize: '13px',
+        color: 'rgba(255,255,255,0.8)',
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        cursor: 'pointer',
+    } as S,
+
+    panel: {
+        ...glass,
+        width: '420px',
+        maxWidth: '100%',
+        boxSizing: 'border-box',
+        padding: '12px 14px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '14px',
+    } as S,
+
+    panelSection: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+    } as S,
+
+    panelHead: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '12px',
+        fontSize: '12px',
+        color: 'rgba(255,255,255,0.8)',
+    } as S,
+
+    panelTitle: {
+        fontFamily: 'var(--font-condensed)',
+        fontSize: '11px',
+        fontWeight: 700,
+        letterSpacing: '0.1em',
+        textTransform: 'uppercase',
+        color: 'rgba(255,255,255,0.55)',
+    } as S,
+
+    switch: {
+        display: 'flex',
+        padding: '2px',
+        gap: '2px',
+        borderRadius: 'var(--radius-sm)',
+        background: 'rgba(255,255,255,0.06)',
+    } as S,
+
+    switchBtn: (active: boolean): S => ({
+        fontFamily: 'var(--font-condensed)',
+        fontSize: '11px',
+        fontWeight: 700,
+        letterSpacing: '0.04em',
+        padding: '3px 8px',
+        border: 'none',
+        borderRadius: '3px',
+        cursor: 'pointer',
+        color: active ? '#fff' : 'rgba(255,255,255,0.55)',
+        background: active ? 'rgba(255,255,255,0.14)' : 'transparent',
+    }),
+
+    grid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(5, 1fr)',
+        gap: '6px',
+    } as S,
+
+    cell: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '1px',
+        minWidth: 0,
+    } as S,
+
+    cellValue: {
+        fontFamily: 'var(--font-condensed)',
+        fontSize: '17px',
+        fontWeight: 800,
+        color: '#fff',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        fontVariantNumeric: 'tabular-nums',
+    } as S,
+
+    cellLabel: {
+        fontSize: '11px',
+        color: 'rgba(255,255,255,0.55)',
+        whiteSpace: 'nowrap',
+    } as S,
+
+    rank: (podium: boolean): S => ({
+        fontFamily: 'var(--font-condensed)',
+        fontSize: '12px',
+        fontWeight: 700,
+        color: podium ? 'var(--accent)' : 'rgba(255,255,255,0.5)',
+        minHeight: '15px',
+    }),
+
+    footnote: {
+        fontSize: '11px',
+        color: 'rgba(255,255,255,0.4)',
+    } as S,
+
+    sessionList: {
+        listStyle: 'none',
+        margin: 0,
+        padding: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+    } as S,
+
+    sessionRow: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        gap: '16px',
+        fontSize: '12px',
+        color: 'rgba(255,255,255,0.8)',
     } as S,
 } as const;
 

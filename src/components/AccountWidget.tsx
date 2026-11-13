@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { Account, accountFromLogin, isLoginCancelled } from '../types/account';
+import { Account, OFFLINE_NAME_HINT, accountFromLogin, isLoginCancelled } from '../types/account';
 import { useUser } from '../context/UserContext';
 import { widget as s } from '../styles/accountWidgetStyles';
 import { LoginCompleteResponse } from '../types/setup';
@@ -202,7 +202,9 @@ function AddAccountModal({
                                 onKeyDown={e => e.key === 'Enter' && handleOfflineSubmit()}
                                 autoFocus
                             />
-                            {nameError && <span style={s.errorText}>{nameError}</span>}
+                            {nameError
+                                ? <span style={s.errorText}>{nameError}</span>
+                                : <span style={s.optionDesc}>{OFFLINE_NAME_HINT}</span>}
                             <button
                                 style={s.primaryBtn(btnHovered)}
                                 onMouseEnter={() => setBtnHovered(true)}

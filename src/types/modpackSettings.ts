@@ -16,6 +16,8 @@ export interface ModpackSettings {
   extraJvmArgs: string;
   /** Abrir la ventana de logs al lanzar el juego */
   showLogs: boolean;
+  /** Entrar directamente al servidor del modpack al jugar (si tiene uno) */
+  joinServer: boolean;
 }
 
 export const DEFAULT_SETTINGS: ModpackSettings = {
@@ -28,6 +30,7 @@ export const DEFAULT_SETTINGS: ModpackSettings = {
   autoJvmArgs: true,
   extraJvmArgs: '',
   showLogs: true,
+  joinServer: true,
 };
 
 export const RESOLUTIONS = [

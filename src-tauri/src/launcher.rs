@@ -22,6 +22,8 @@ pub struct LaunchSettings {
     pub window_width: u32,
     pub window_height: u32,
     pub extra_jvm_args: String,
+    /// Servidor al que entrar nada más arrancar (`host` o `host:puerto`)
+    pub join_server: Option<String>,
 }
 /// Datos de sesión con los que se lanza el juego
 pub struct LaunchAuth {
@@ -72,7 +74,42 @@ impl Default for LaunchSettings {
             window_width: 1280,
             window_height: 720,
             extra_jvm_args: String::new(),
+            join_server: None,
         }
+    }
+}
+
+/// Argumentos para entrar directamente a un servidor al arrancar el juego.
+/// Desde la 1.20 se usa `--quickPlayMultiplayer`; antes, `--server` y `--port`.
+/// Devuelve `None` si la dirección no es un host (con puerto opcional) válido.
+fn join_server_args(mc_version: &str, address: &str) -> Option<Vec<String>> {
+    let address = address.trim();
+    let (host, port) = match address.rsplit_once(':') {
+        Some((host, port)) => (host, Some(port.parse::<u16>().ok().filter(|p| *p > 0)?)),
+        None => (address, None),
+    };
+    let valid_host = !host.is_empty()
+        && host.len() <= 253
+        && !host.starts_with(['-', '.'])
+        && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    if !valid_host {
+        return None;
+    }
+    let mut parts = mc_version.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+    let (major, minor) = (parts.next().unwrap_or(0), parts.next().unwrap_or(0));
+    if major > 1 || minor >= 20 {
+        let target = match port {
+            Some(port) => format!("{}:{}", host, port),
+            None => host.to_string(),
+        };
+        Some(vec!["--quickPlayMultiplayer".to_string(), target])
+    } else {
+        Some(vec![
+            "--server".to_string(),
+            host.to_string(),
+            "--port".to_string(),
+            port.unwrap_or(25565).to_string(),
+        ])
     }
 }
 #[cfg(target_os = "windows")]
@@ -434,6 +471,16 @@ pub async fn build_plan(request: &LaunchRequest<'_>, reporter: &Reporter) -> Res
         game_args.extend(json_args(&json["arguments"]["game"]).into_iter().map(|arg| resolver.resolve(arg)));
     }
 
+    if let Some(address) = settings.join_server.as_deref().filter(|a| !a.trim().is_empty()) {
+        match join_server_args(mc_version, address) {
+            Some(args) => {
+                info!("[launcher] Entrando directamente a {}", address.trim());
+                game_args.extend(args);
+            }
+            None => warn!("[launcher] Dirección de servidor no válida, se ignora: {}", address),
+        }
+    }
+
     let mut cmd_args = jvm_args;
     cmd_args.push(main_class);
     cmd_args.extend(game_args);
@@ -608,6 +655,22 @@ fn is_gc_arg(arg: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn join_server_uses_quick_play_from_1_20() {
+        let args = |v: &str, a: &str| join_server_args(v, a).map(|a| a.join(" "));
+        assert_eq!(args("1.20.1", "play.kb.com").as_deref(), Some("--quickPlayMultiplayer play.kb.com"));
+        assert_eq!(args("1.21", " play.kb.com:25570 ").as_deref(), Some("--quickPlayMultiplayer play.kb.com:25570"));
+        assert_eq!(args("1.19.2", "play.kb.com").as_deref(), Some("--server play.kb.com --port 25565"));
+        assert_eq!(args("1.12.2", "1.2.3.4:25570").as_deref(), Some("--server 1.2.3.4 --port 25570"));
+    }
+
+    #[test]
+    fn join_server_rejects_bad_addresses() {
+        for bad in ["", ":25565", "play.kb.com:0", "play.kb.com:99999", "play kb.com", "-x.com", "a/b", "host:port"] {
+            assert!(join_server_args("1.20.1", bad).is_none(), "{bad}");
+        }
+    }
 
     #[test]
     fn token_never_reaches_the_logs() {

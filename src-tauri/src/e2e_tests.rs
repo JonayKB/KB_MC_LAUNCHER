@@ -107,6 +107,7 @@ fn e2e_settings() -> LaunchSettings {
         window_width: 854,
         window_height: 480,
         extra_jvm_args: recommended.extra_jvm_args,
+        join_server: None,
     }
 }
 

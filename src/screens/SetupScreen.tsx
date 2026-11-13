@@ -3,7 +3,7 @@ import { useUser } from '../context/UserContext';
 import { layout, logo, header, box, text, btn, input as inp } from '../styles/components';
 import { invoke } from '@tauri-apps/api/core';
 import { LoginCompleteResponse } from '../types/setup';
-import { Account, accountFromLogin, isLoginCancelled, upsertAccount, validateOfflineUsername } from '../types/account';
+import { Account, accountFromLogin, isLoginCancelled, upsertAccount, validateOfflineUsername, OFFLINE_NAME_HINT } from '../types/account';
 
 type Step = 'owns_minecraft' | 'offline_username' | 'microsoft_prompt';
 
@@ -128,7 +128,9 @@ export default function SetupScreen({ onComplete }: Readonly<{ onComplete: () =>
                             onKeyDown={e => e.key === 'Enter' && handleOfflineSubmit()}
                             autoFocus
                         />
-                        {inputError && <span style={text.fieldError}>{inputError}</span>}
+                        {inputError
+                            ? <span style={text.fieldError}>{inputError}</span>
+                            : <span style={{ ...text.statusSmall, fontSize: '12px', wordBreak: 'normal' }}>{OFFLINE_NAME_HINT}</span>}
                         <button
                             style={{ ...btn.primary, ...(continueHovered ? btn.primaryHover : {}) }}
                             onMouseEnter={() => setContinueHovered(true)}
