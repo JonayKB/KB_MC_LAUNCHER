@@ -78,12 +78,16 @@ export async function ensureModpackSettings(modpackId: string): Promise<ModpackS
     return settings;
 }
 
-/** Lanza el modpack con la cuenta indicada (ya con la sesión refrescada) */
+/**
+ * Lanza el modpack con la cuenta indicada (ya con la sesión refrescada).
+ * Con `serverAddress` entra directamente a ese servidor; sin ella, abre el menú principal.
+ */
 export async function launchModpack(
     modpack: ModpackVersion,
     basePath: string,
     account: Account,
     modpackName: string,
+    serverAddress?: string | null,
 ): Promise<void> {
     const settings = await ensureModpackSettings(modpack.modpackId);
     const rec = settings.autoJvmArgs ? await getRecommendedSettings() : null;
@@ -109,6 +113,7 @@ export async function launchModpack(
         windowWidth: settings.windowWidth,
         windowHeight: settings.windowHeight,
         extraJvmArgs: jvmArgs,
+        joinServer: serverAddress || null,
     });
     recordPlayed(modpack.modpackId);
 }

@@ -156,6 +156,13 @@ This check runs on the player's clock, so it is a display gate only: don't uploa
 
 When a server closes, add `end_date` (same format) to its entry. From that moment it shows as finished on the home screen and moves to the end of the list; its detail screen warns that the server is closed, but the modpack can still be installed and played.
 
+Set `server_address` (`"minecraft.example.com"` or `"1.2.3.4:25570"`) to link the modpack to its server. While the modpack is open (after `release_date`, before `end_date`):
+
+- A **Join server** button above **Play** opens the game straight into that server (`--quickPlayMultiplayer` from 1.20, `--server`/`--port` before). **Play** still opens the main menu.
+- The detail screen shows who is online, a button to copy the address and the web map. Below it, the player's stats and rank on the server, plus their sessions on this computer.
+
+The status and stats come from [KB Discord Bot](https://github.com/JonayKB/KB_Discord_Bot) (`/servers/status.json`), which must list the server with the same public address. The format is in the bot's `docs/launcher-contract.md`. If the bot doesn't answer, only the address is shown.
+
 `loader` can be `forge` (default), `neoforge`, `fabric` or `vanilla`. `loaderVersion` is required except for `vanilla`. Older files that only set `forgeVersion` keep working as Forge.
 
 When `version` changes, installed players get an **Update** button. Updating downloads both files first, then replaces the whole `mods/` folder and copies the overrides over the instance. It does not change Minecraft or the loader: a new `minecraftVersion` or `loaderVersion` needs a reinstall.

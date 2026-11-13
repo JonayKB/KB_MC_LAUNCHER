@@ -13,6 +13,12 @@ export interface ModpackEntry {
      * de ella se muestra como terminado, pero se puede seguir instalando y jugando.
      */
     end_date?: string;
+    /**
+     * Dirección del servidor del modpack, p. ej. "minecraft.jonaykb.com" o "1.2.3.4:25570".
+     * Con ella el launcher entra directo al servidor al jugar y muestra su estado y tus
+     * estadísticas (KB Discord Bot publica el servidor con esa misma dirección).
+     */
+    server_address?: string;
 }
 
 export interface ModpackIndex {

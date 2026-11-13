@@ -88,6 +88,12 @@ export function upsertAccount(accounts: Account[], account: Account): Account[] 
     return [...accounts.filter(a => !same(a)).map(a => ({ ...a, isActual: false })), { ...account, isActual: true }];
 }
 
+/**
+ * En los servidores offline el jugador se identifica por el nombre exacto: kb_whitelist y las
+ * estadísticas usan un UUID que cambia con las mayúsculas.
+ */
+export const OFFLINE_NAME_HINT = 'Usa el mismo nombre con el que te apuntaste al servidor, con las mismas mayúsculas: «Steve» y «steve» son jugadores distintos.';
+
 /** Devuelve el mensaje de error, o null si el nombre es válido */
 export function validateOfflineUsername(name: string): string | null {
     if (name.length < 3 || name.length > 16) return 'El nombre debe tener entre 3 y 16 caracteres';

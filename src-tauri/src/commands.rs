@@ -252,6 +252,7 @@ pub async fn launch_modpack(
     window_width: Option<u32>,
     window_height: Option<u32>,
     extra_jvm_args: Option<String>,
+    join_server: Option<String>,
 ) -> Result<(), String> {
     validate_modpack_id(&modpack_id)?;
 
@@ -273,6 +274,7 @@ pub async fn launch_modpack(
         window_width: window_width.unwrap_or(1280),
         window_height: window_height.unwrap_or(720),
         extra_jvm_args: extra_jvm_args.unwrap_or_default(),
+        join_server,
     };
 
     let launched = launch(
