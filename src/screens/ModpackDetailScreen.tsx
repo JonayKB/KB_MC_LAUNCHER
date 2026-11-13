@@ -36,6 +36,7 @@ export default function ModpackDetailScreen() {
     const [loadError, setLoadError] = useState<string | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [joinHovered, setJoinHovered] = useState(false);
     const playing = useGameRunning(modpack?.modpackId);
     const playtime = usePlaytime(modpack?.modpackId);
     // Las fechas de lanzamiento y cierre vienen en index.json (latest.json no las trae)
@@ -189,13 +190,14 @@ export default function ModpackDetailScreen() {
         }
     }
 
-    async function handlePlay(modpack: ModpackVersion) {
+    /** Con `joinServer` entra directamente al servidor del modpack */
+    async function handlePlay(modpack: ModpackVersion, joinServer = false) {
         if (!basePath) return;
         setLaunching(true);
         setLaunchError(null);
         try {
             const account = await ensureActiveSession();
-            await launchModpack(modpack, basePath, account, name || modpack.modpackId, serverAddress);
+            await launchModpack(modpack, basePath, account, name || modpack.modpackId, joinServer ? serverAddress : null);
         } catch (err) {
             setLaunchError(`Error al lanzar: ${err}`);
         } finally {
@@ -265,6 +267,10 @@ export default function ModpackDetailScreen() {
     // Mientras no se sepa la fecha de lanzamiento no se deja instalar
     const playDisabled = isBusy || !basePath || blockedByRelease || (!indexChecked && !isInstalled);
 
+    // Solo con el modpack listo para jugar: si falta instalar o actualizar, primero eso
+    // (mientras arranca o está en partida se queda visible pero desactivado, como Jugar)
+    const canJoin = !!serverAddress && isInstalled && !needsUpdate;
+
     const playButtonLabel = () => {
         if (blockedByRelease && releaseAt !== null) return `Disponible en ${formatCountdown(releaseAt - now)}`;
         if (installing && job?.isUninstall) return 'Desinstalando...';
@@ -284,7 +290,6 @@ export default function ModpackDetailScreen() {
             <ModpackSettingsModal
                 modpackId={modpack.modpackId}
                 modpackName={name || modpack.modpackId}
-                serverAddress={serverAddress}
                 onClose={() => setSettingsOpen(false)}
             />
         )}
@@ -337,59 +342,79 @@ export default function ModpackDetailScreen() {
                         </div>
 
                         <div style={detail.actionsCol}>
-                            <button
-                                style={{
-                                    ...detail.playButton,
-                                    opacity: playDisabled ? 0.5 : 1,
-                                    cursor: playDisabled ? 'not-allowed' : 'pointer',
-                                }}
-                                disabled={playDisabled}
-                                onClick={() => isInstalled && !needsUpdate ? handlePlay(modpack) : handleInstall(modpack)}
-                            >
-                                {playButtonLabel()}
-                            </button>
-
-                            <div style={detail.menuWrap} ref={menuRef}>
+                            {canJoin && (
                                 <button
-                                    style={{ ...detail.menuButton, ...(menuOpen ? detail.menuButtonHover : {}) }}
-                                    onClick={() => setMenuOpen((v) => !v)}
-                                    aria-label="Más opciones"
-                                    // Abierto también en partida, para poder ver la consola
-                                    disabled={anyInstalling || launching}
+                                    style={{
+                                        ...detail.joinButton,
+                                        ...(joinHovered && !playDisabled ? detail.joinButtonHover : {}),
+                                        opacity: playDisabled ? 0.5 : 1,
+                                        cursor: playDisabled ? 'not-allowed' : 'pointer',
+                                    }}
+                                    disabled={playDisabled}
+                                    onMouseEnter={() => setJoinHovered(true)}
+                                    onMouseLeave={() => setJoinHovered(false)}
+                                    onClick={() => handlePlay(modpack, true)}
+                                    title={`Abre el juego y entra en ${serverAddress}`}
                                 >
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                                        <circle cx="12" cy="5" r="2" />
-                                        <circle cx="12" cy="12" r="2" />
-                                        <circle cx="12" cy="19" r="2" />
-                                    </svg>
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></svg>
+                                    Entrar al servidor
+                                </button>
+                            )}
+                            <div style={detail.actionsRow}>
+                                <button
+                                    style={{
+                                        ...detail.playButton,
+                                        opacity: playDisabled ? 0.5 : 1,
+                                        cursor: playDisabled ? 'not-allowed' : 'pointer',
+                                    }}
+                                    disabled={playDisabled}
+                                    onClick={() => isInstalled && !needsUpdate ? handlePlay(modpack) : handleInstall(modpack)}
+                                >
+                                    {playButtonLabel()}
                                 </button>
 
-                                {menuOpen && (
-                                    <div style={detail.dropdown}>
-                                        {menuItems.map((menuItem, idx) => {
-                                            const disabled = (menuItem.requiresInstall && !isInstalled)
-                                                || (menuItem.id === 'uninstall' && playing);
-                                            return (
-                                                <div key={menuItem.id}>
-                                                    <div
-                                                        style={detail.dropdownItem(menuHoverId === menuItem.id, menuItem.danger, disabled)}
-                                                        onMouseEnter={() => !disabled && setMenuHoverId(menuItem.id)}
-                                                        onMouseLeave={() => setMenuHoverId(null)}
-                                                        onClick={() => {
-                                                            if (disabled) return;
-                                                            menuItem.onClick();
-                                                            setMenuOpen(false);
-                                                        }}
-                                                    >
-                                                        <span style={detail.dropdownIcon}>{menuItem.icon}</span>
-                                                        {menuItem.label}
+                                <div style={detail.menuWrap} ref={menuRef}>
+                                    <button
+                                        style={{ ...detail.menuButton, ...(menuOpen ? detail.menuButtonHover : {}) }}
+                                        onClick={() => setMenuOpen((v) => !v)}
+                                        aria-label="Más opciones"
+                                        // Abierto también en partida, para poder ver la consola
+                                        disabled={anyInstalling || launching}
+                                    >
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                            <circle cx="12" cy="5" r="2" />
+                                            <circle cx="12" cy="12" r="2" />
+                                            <circle cx="12" cy="19" r="2" />
+                                        </svg>
+                                    </button>
+
+                                    {menuOpen && (
+                                        <div style={detail.dropdown}>
+                                            {menuItems.map((menuItem, idx) => {
+                                                const disabled = (menuItem.requiresInstall && !isInstalled)
+                                                    || (menuItem.id === 'uninstall' && playing);
+                                                return (
+                                                    <div key={menuItem.id}>
+                                                        <div
+                                                            style={detail.dropdownItem(menuHoverId === menuItem.id, menuItem.danger, disabled)}
+                                                            onMouseEnter={() => !disabled && setMenuHoverId(menuItem.id)}
+                                                            onMouseLeave={() => setMenuHoverId(null)}
+                                                            onClick={() => {
+                                                                if (disabled) return;
+                                                                menuItem.onClick();
+                                                                setMenuOpen(false);
+                                                            }}
+                                                        >
+                                                            <span style={detail.dropdownIcon}>{menuItem.icon}</span>
+                                                            {menuItem.label}
+                                                        </div>
+                                                        {idx === 0 && <div style={detail.dropdownDivider} />}
                                                     </div>
-                                                    {idx === 0 && <div style={detail.dropdownDivider} />}
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                )}
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </div>

@@ -68,9 +68,7 @@ function HeroCard({ item, lastPlayedAt }: Readonly<{ item: ModpackOverview; last
             setLaunching(true);
             try {
                 const account = await ensureActiveSession();
-                // Antes de abrir y después de cerrar no hay servidor al que entrar
-                const serverAddress = ended || upcoming ? null : entry.server_address?.trim() || null;
-                await launchModpack(latest, basePath, account, entry.name, serverAddress);
+                await launchModpack(latest, basePath, account, entry.name);
             } catch (err) {
                 setError(`Error al lanzar: ${err}`);
             } finally {

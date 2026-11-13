@@ -80,7 +80,7 @@ export async function ensureModpackSettings(modpackId: string): Promise<ModpackS
 
 /**
  * Lanza el modpack con la cuenta indicada (ya con la sesión refrescada).
- * Con `serverAddress` entra directamente a ese servidor, salvo que el jugador lo haya desactivado.
+ * Con `serverAddress` entra directamente a ese servidor; sin ella, abre el menú principal.
  */
 export async function launchModpack(
     modpack: ModpackVersion,
@@ -113,7 +113,7 @@ export async function launchModpack(
         windowWidth: settings.windowWidth,
         windowHeight: settings.windowHeight,
         extraJvmArgs: jvmArgs,
-        joinServer: settings.joinServer && serverAddress ? serverAddress : null,
+        joinServer: serverAddress || null,
     });
     recordPlayed(modpack.modpackId);
 }

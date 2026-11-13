@@ -158,7 +158,7 @@ When a server closes, add `end_date` (same format) to its entry. From that momen
 
 Set `server_address` (`"minecraft.example.com"` or `"1.2.3.4:25570"`) to link the modpack to its server. While the modpack is open (after `release_date`, before `end_date`):
 
-- **Play** joins that server straight away (`--quickPlayMultiplayer` from 1.20, `--server`/`--port` before). Players can turn this off in the modpack settings.
+- A **Join server** button above **Play** opens the game straight into that server (`--quickPlayMultiplayer` from 1.20, `--server`/`--port` before). **Play** still opens the main menu.
 - The detail screen shows who is online, a button to copy the address and the web map. Below it, the player's stats and rank on the server, plus their sessions on this computer.
 
 The status and stats come from [KB Discord Bot](https://github.com/JonayKB/KB_Discord_Bot) (`/servers/status.json`), which must list the server with the same public address. The format is in the bot's `docs/launcher-contract.md`. If the bot doesn't answer, only the address is shown.

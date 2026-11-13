@@ -87,9 +87,40 @@ export const detail = {
 
     actionsCol: {
         display: 'flex',
-        alignItems: 'center',
+        flexDirection: 'column',
+        alignItems: 'stretch',
         gap: '10px',
         flexShrink: 0,
+    } as S,
+
+    actionsRow: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+    } as S,
+
+    /** Secundario: el principal sigue siendo Jugar */
+    joinButton: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '8px',
+        fontFamily: 'var(--font-condensed)',
+        fontSize: '13px',
+        fontWeight: 700,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        color: '#fff',
+        background: 'rgba(255,255,255,0.08)',
+        border: '1px solid rgba(255,255,255,0.15)',
+        borderRadius: 'var(--radius-md)',
+        padding: '10px 16px',
+        backdropFilter: 'blur(6px)',
+        transition: 'background-color 0.15s',
+    } as S,
+
+    joinButtonHover: {
+        background: 'rgba(255,255,255,0.16)',
     } as S,
 
     playButton: {

@@ -26,8 +26,6 @@ function formatGb(mb: number): string {
 interface Props {
     modpackId: string;
     modpackName: string;
-    /** Servidor del modpack: si lo hay, se puede elegir entrar directamente al jugar */
-    serverAddress?: string | null;
     onClose: () => void;
     onSave?: (settings: ModpackSettings) => void;
 }
@@ -67,7 +65,7 @@ function PresetButton({ label, value, active, onClick }: Readonly<{ label: strin
     );
 }
 
-export default function ModpackSettingsModal({ modpackId, modpackName, serverAddress, onClose, onSave }: Props) {
+export default function ModpackSettingsModal({ modpackId, modpackName, onClose, onSave }: Props) {
     const [settings, setSettings] = useState<ModpackSettings | null>(null);
     const [rec, setRec] = useState<RecommendedSettings | null>(null);
     const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -299,17 +297,6 @@ export default function ModpackSettingsModal({ modpackId, modpackName, serverAdd
                                 </div>
                                 <Toggle on={settings.showLogs} onChange={v => set('showLogs', v)} label="Abrir la consola del juego" />
                             </div>
-                            {serverAddress && (
-                                <div style={ui.toggleRow}>
-                                    <div style={ui.toggleText}>
-                                        <span style={modal.label}>Entrar directamente al servidor</span>
-                                        <span style={ui.toggleDesc}>
-                                            Al pulsar Jugar se conecta a {serverAddress} sin pasar por el menú. Desactívalo para jugar en un mundo propio.
-                                        </span>
-                                    </div>
-                                    <Toggle on={settings.joinServer} onChange={v => set('joinServer', v)} label="Entrar directamente al servidor" />
-                                </div>
-                            )}
                         </div>
 
                         <div style={modal.divider} />
