@@ -143,13 +143,13 @@ export default function NavbarComponent() {
                                 onMouseLeave={() => setHoveredId(null)}
                             >
                                 <span style={item.thumbWrap}>
-                                    <img src={modpack.imageUrl} alt={modpack.name} style={{ ...item.thumb(isActive), ...(upcoming || ended ? item.thumbUpcoming : {}) }} />
+                                    <img src={modpack.imageUrl} alt={modpack.name} style={{ ...item.thumb(isActive), ...(ended ? item.thumbEnded : {}), ...(upcoming ? item.thumbUpcoming : {}) }} />
                                     {(upcoming || ended) && (
-                                        <span style={item.lockBadge} aria-hidden>
+                                        <span style={{ ...item.lockBadge, ...(upcoming ? item.upcomingBadge : {}) }} aria-hidden>
                                             {ended ? (
                                                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22V4h14l-3 4 3 4H4" /></svg>
                                             ) : (
-                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2 2M9 2h6" /></svg>
                                             )}
                                         </span>
                                     )}

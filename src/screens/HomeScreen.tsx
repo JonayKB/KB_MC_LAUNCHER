@@ -99,7 +99,7 @@ function HeroCard({ item, lastPlayedAt }: Readonly<{ item: ModpackOverview; last
 
     return (
         <section style={home.hero(image)}>
-            {(upcoming || ended) && <div style={home.upcomingVeil} />}
+            {ended && <div style={home.endedVeil} />}
             <div style={home.heroContent}>
                 <span style={home.heroEyebrow}>{eyebrow}</span>
                 <h2 style={home.heroTitle}>{entry.name}</h2>
@@ -172,16 +172,24 @@ function ModpackCard({ item, now, onOpen }: Readonly<{ item: ModpackOverview; no
             onClick={onOpen}
         >
             <div style={home.cardImage(entry.imageUrl ?? latest?.images?.[0])}>
-                {upcoming || ended ? (
+                {ended ? (
                     <>
-                        <div style={home.upcomingVeil} />
+                        <div style={home.endedVeil} />
+                        <span style={home.endedBadge}>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22V4h14l-3 4 3 4H4" /></svg>
+                            Terminado
+                        </span>
+                    </>
+                ) : upcoming ? (
+                    <>
+                        <div style={home.upcomingShade} />
                         <span style={home.upcomingBadge}>
-                            {ended ? (
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22V4h14l-3 4 3 4H4" /></svg>
-                            ) : (
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
-                            )}
-                            {ended ? 'Terminado' : 'Próximamente'}
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2 2M9 2h6" /></svg>
+                            Próximamente
+                        </span>
+                        <span style={home.upcomingCountdown}>
+                            <span style={home.upcomingCountdownLabel}>En</span>
+                            {formatCountdown(releaseAt - now)}
                         </span>
                     </>
                 ) : (
@@ -200,7 +208,7 @@ function ModpackCard({ item, now, onOpen }: Readonly<{ item: ModpackOverview; no
                 )}
                 {upcoming && (
                     <span style={home.releaseLine}>
-                        Disponible el {formatReleaseDate(releaseAt)} · <span style={home.countdown}>en {formatCountdown(releaseAt - now)}</span>
+                        Disponible el {formatReleaseDate(releaseAt)}
                     </span>
                 )}
                 {ended && (
