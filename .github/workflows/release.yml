@@ -149,3 +149,14 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # El .rpm se instala en Fedora, que no tiene libbz2.so.1.0 (nombre de Debian/Ubuntu):
+      # si el binario la pide, el launcher no arranca. Ver bzip2 "static" en Cargo.toml.
+      - name: Check Linux binary does not need Debian-only libraries
+        if: matrix.platform == 'linux'
+        run: |
+          readelf -d src-tauri/target/release/kb-mc-launcher | grep NEEDED
+          if readelf -d src-tauri/target/release/kb-mc-launcher | grep -q 'libbz2'; then
+            echo "::error::El binario enlaza con libbz2 del sistema; no arrancará en Fedora. No publiques este borrador."
+            exit 1
+          fi
