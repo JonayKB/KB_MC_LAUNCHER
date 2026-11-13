@@ -23,6 +23,9 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 zip = "2"
+# zip trae bzip2: sin "static" se enlaza con la libbz2 del sistema de CI (libbz2.so.1.0 en
+# Ubuntu), que no existe en Fedora y el .rpm no arrancaba. Así va dentro del binario.
+bzip2 = { version = "0.5", features = ["static"] }
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-fs = "2.5.1"
 anyhow = "1.0"
