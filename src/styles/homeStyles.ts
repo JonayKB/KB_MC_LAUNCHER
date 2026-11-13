@@ -191,9 +191,9 @@ export const home = {
     animation: 'pulse 1.4s ease-in-out infinite',
   } as S,
 
-  // ── Modpacks aún no lanzados ────────────────────────────────
+  // ── Modpacks terminados ─────────────────────────────────────
   /** Capa que pone en gris lo que hay debajo (imagen del hero o de la tarjeta) */
-  upcomingVeil: {
+  endedVeil: {
     position: 'absolute',
     inset: 0,
     backdropFilter: 'grayscale(1) brightness(0.7)',
@@ -201,7 +201,7 @@ export const home = {
     pointerEvents: 'none',
   } as S,
 
-  upcomingBadge: {
+  endedBadge: {
     ...condensedLabel,
     position: 'absolute',
     top: '10px',
@@ -217,15 +217,59 @@ export const home = {
     zIndex: 1,
   } as S,
 
+  // ── Modpacks aún no lanzados ────────────────────────────────
+  /** Oscurece la parte de abajo de la imagen (en color) para que se lea la cuenta atrás */
+  upcomingShade: {
+    position: 'absolute',
+    inset: 0,
+    background: 'linear-gradient(180deg, rgba(8,8,9,0.15) 0%, rgba(8,8,9,0.35) 45%, rgba(8,8,9,0.9) 100%)',
+    pointerEvents: 'none',
+  } as S,
+
+  upcomingBadge: {
+    ...condensedLabel,
+    position: 'absolute',
+    top: '10px',
+    left: '10px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontSize: '10px',
+    padding: '3px 8px',
+    borderRadius: 'var(--radius-sm)',
+    background: 'var(--accent)',
+    color: '#fff',
+    zIndex: 1,
+  } as S,
+
+  upcomingCountdown: {
+    ...condensedLabel,
+    position: 'absolute',
+    left: '12px',
+    right: '12px',
+    bottom: '8px',
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: '6px',
+    fontSize: '24px',
+    lineHeight: 1,
+    letterSpacing: '0.04em',
+    fontVariantNumeric: 'tabular-nums',
+    color: 'var(--accent)',
+    textShadow: '0 1px 6px rgba(0,0,0,0.6)',
+    whiteSpace: 'nowrap',
+    zIndex: 1,
+  } as S,
+
+  upcomingCountdownLabel: {
+    fontSize: '12px',
+    letterSpacing: '0.12em',
+    color: 'rgba(255,255,255,0.75)',
+  } as S,
+
   releaseLine: {
     fontSize: '12px',
     color: 'var(--text-secondary)',
-  } as S,
-
-  countdown: {
-    fontVariantNumeric: 'tabular-nums',
-    color: 'var(--accent)',
-    fontWeight: 500,
   } as S,
 
   // ── Stats ───────────────────────────────────────────────────

@@ -71,9 +71,14 @@ export const item = {
     flexShrink: 0,
   } as S,
 
-  /** Modpack que todavía no se ha lanzado */
-  thumbUpcoming: {
+  /** Modpack cuyo servidor ya ha cerrado */
+  thumbEnded: {
     filter: 'grayscale(1) brightness(0.55)',
+  } as S,
+
+  /** Modpack que todavía no se ha lanzado: en color, algo atenuado */
+  thumbUpcoming: {
+    filter: 'brightness(0.75)',
   } as S,
 
   lockBadge: {
@@ -89,6 +94,12 @@ export const item = {
     background: 'var(--bg-elevated)',
     border: '1px solid var(--border-strong)',
     color: 'var(--text-muted)',
+  } as S,
+
+  upcomingBadge: {
+    background: 'var(--accent)',
+    border: '1px solid var(--accent)',
+    color: '#fff',
   } as S,
 
   nameCol: (expanded: boolean): S => ({
