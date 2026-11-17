@@ -191,19 +191,25 @@ pub fn recommend_settings(info: &SystemInfo) -> RecommendedSettings {
     // del modpack y de la RAM elegida, así que lo decide el launcher al lanzar
     // (ver `gc_args`).
     // ── Optimizaciones generales ──────────────────────────────
-    let mut args: Vec<String> = vec![
-        "-XX:+DisableExplicitGC".to_string(),
-        "-XX:AllocatePrefetchStyle=1".to_string(),
-        "-Dfml.readTimeout=120".to_string(),
-        "-Dfml.loginTimeout=120".to_string(),
-    ];
+    let args: Vec<String> = [
+        // Los System.gc() de los mods lanzan un ciclo concurrente en vez de
+        // congelar el juego. No usar -XX:+DisableExplicitGC: también anula el
+        // GC que Java hace para liberar memoria directa antes de rendirse, y
+        // eso acaba en "OutOfMemoryError: Cannot reserve ... bytes of direct
+        // buffer memory" con mods de render (culling, shaders, Embeddium).
+        "-XX:+ExplicitGCInvokesConcurrent",
+        // Con cientos de mods la caché de código JIT por defecto (240MB) se
+        // llena; entonces Java deja de compilar y el juego va a tirones.
+        "-XX:ReservedCodeCacheSize=400M",
+        "-XX:AllocatePrefetchStyle=1",
+        "-Dfml.readTimeout=120",
+        "-Dfml.loginTimeout=120",
+    ]
+    .map(String::from)
+    .to_vec();
 
     // Sin `-XX:MaxDirectMemorySize`: por defecto Java usa el mismo límite que
-    // -Xmx. Con 256-512MB los mods de render (culling, shaders, Sodium/Embeddium)
-    // agotaban la memoria directa y el juego crasheaba con
-    // "OutOfMemoryError: Cannot reserve ... bytes of direct buffer memory",
-    // sobre todo porque -XX:+DisableExplicitGC impide que Java fuerce un GC
-    // para liberar buffers antes de rendirse.
+    // -Xmx. Con 256-512MB los mods de render agotaban la memoria directa.
 
     info!("[sysinfo] {} args JVM generados", args.len());
 
@@ -280,7 +286,28 @@ fn get_total_ram_mb() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{gc_args, recommend_max_ram_mb};
+    use super::{gc_args, recommend_max_ram_mb, recommend_settings, SystemInfo};
+
+    #[test]
+    fn recommended_args_do_not_starve_direct_memory() {
+        for total_ram_mb in [8192, 16384, 32768] {
+            let info = SystemInfo {
+                total_ram_mb,
+                cpu_cores: 8,
+                os: "windows".to_string(),
+                screen_height: 1080,
+                screen_width: 1920,
+            };
+            let args = recommend_settings(&info).extra_jvm_args;
+            // Limitar la memoria directa o bloquear el GC explícito hacía que
+            // los mods de render crashearan con OutOfMemoryError
+            assert!(!args.contains("MaxDirectMemorySize"), "{args}");
+            assert!(!args.contains("DisableExplicitGC"), "{args}");
+            assert!(args.contains("-XX:+ExplicitGCInvokesConcurrent"), "{args}");
+            // ModpackActions.ts lo usa para reconocer args antiguos guardados
+            assert!(args.contains("-XX:AllocatePrefetchStyle=1"), "{args}");
+        }
+    }
 
     #[test]
     fn zgc_only_with_java_21_and_enough_ram() {
