@@ -198,8 +198,12 @@ pub fn recommend_settings(info: &SystemInfo) -> RecommendedSettings {
         "-Dfml.loginTimeout=120".to_string(),
     ];
 
-    let nio_size = if max_ram_mb >= 8192 { 512 } else { 256 };
-    args.push(format!("-XX:MaxDirectMemorySize={}M", nio_size));
+    // Sin `-XX:MaxDirectMemorySize`: por defecto Java usa el mismo límite que
+    // -Xmx. Con 256-512MB los mods de render (culling, shaders, Sodium/Embeddium)
+    // agotaban la memoria directa y el juego crasheaba con
+    // "OutOfMemoryError: Cannot reserve ... bytes of direct buffer memory",
+    // sobre todo porque -XX:+DisableExplicitGC impide que Java fuerce un GC
+    // para liberar buffers antes de rendirse.
 
     info!("[sysinfo] {} args JVM generados", args.len());
 
