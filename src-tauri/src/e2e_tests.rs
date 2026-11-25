@@ -185,7 +185,8 @@ async fn run_case(id: &str, loader: &str, mc: &str, loader_version: &str, url: &
     let base = base_dir();
     let start = Instant::now();
     installer::install_with(
-        Reporter::none(), &base, mc, loader, Some(loader_version.to_string()), url, url, id, Some("1.0"),
+        Reporter::none(), &base, mc, loader, Some(loader_version.to_string()),
+        &installer::Content::Zips { mods_url: url.to_string(), overrides_url: url.to_string() }, id, Some("1.0"),
     )
     .await
     .map_err(|e| format!("instalación: {:#}", e))?;
@@ -291,23 +292,24 @@ async fn e2e_published_modpack_install_update_and_launch() {
     let pack: Value = http::get_json("https://me.jonaykb.com/modpacks/craft-to-exile-2/latest.json").await.unwrap();
     let (mc, forge) = (pack["minecraftVersion"].as_str().unwrap(), pack["forgeVersion"].as_str().unwrap());
     let (mods, overrides) = (pack["modsUrl"].as_str().unwrap(), pack["overridesUrl"].as_str().unwrap());
+    let zips = |mods: &str, overrides: &str| installer::Content::Zips { mods_url: mods.to_string(), overrides_url: overrides.to_string() };
     let id = "e2e-ctx2";
 
-    installer::install_with(Reporter::none(), &base, mc, "forge", Some(forge.to_string()), overrides, mods, id, Some("old")).await.unwrap();
+    installer::install_with(Reporter::none(), &base, mc, "forge", Some(forge.to_string()), &zips(mods, overrides), id, Some("old")).await.unwrap();
     let instance = base.join("instances").join(id);
     let jars = std::fs::read_dir(instance.join("mods")).unwrap().count();
     assert!(jars > 50, "solo {} mods", jars);
 
     // Actualizar sobre lo instalado con los archivos reales
     std::fs::write(instance.join("mods").join("sobrante.jar"), "x").unwrap();
-    installer::update_with(Reporter::none(), &base, overrides, mods, id, Some("new")).await.unwrap();
+    installer::update_with(Reporter::none(), &base, &zips(mods, overrides), id, Some("new")).await.unwrap();
     assert!(!instance.join("mods").join("sobrante.jar").exists());
     assert_eq!(std::fs::read_dir(instance.join("mods")).unwrap().count(), jars);
     assert_eq!(std::fs::read_to_string(instance.join(installer::INSTALLED_VERSION_FILE)).unwrap(), "new");
     assert!(!instance.join(installer::STAGING_DIR).exists());
 
     // Un fallo real de red a mitad de actualización no toca nada
-    let result = installer::update_with(Reporter::none(), &base, "https://me.jonaykb.com/modpacks/no-existe.zip", mods, id, Some("rota")).await;
+    let result = installer::update_with(Reporter::none(), &base, &zips(mods, "https://me.jonaykb.com/modpacks/no-existe.zip"), id, Some("rota")).await;
     assert!(result.is_err());
     assert_eq!(std::fs::read_dir(instance.join("mods")).unwrap().count(), jars);
     assert_eq!(std::fs::read_to_string(instance.join(installer::INSTALLED_VERSION_FILE)).unwrap(), "new");
@@ -327,4 +329,81 @@ async fn e2e_published_modpack_install_update_and_launch() {
     let log = base.join("e2e-ctx2.log");
     let proof = play(&plan, &log).await.unwrap_or_else(|e| panic!("{} (ver {:?})", e, log));
     println!("OK   modpack publicado arranca: {}", proof);
+}
+
+/// Instalación y actualización por manifiesto con los archivos de verdad del modpack.
+///
+///   KB_E2E_MANIFEST=http://127.0.0.1:8000/manifest-1.4.2.json \
+///   KB_E2E_SEED=~/Repositories/KB_Server_Invierno_2026 \
+///     cargo test --lib e2e_manifest -- --ignored --nocapture
+///
+/// Sin `KB_E2E_MANIFEST` usa el del modpack publicado. Con `KB_E2E_SEED` la
+/// instancia empieza con los mods y overrides de ese repo, como una instalación
+/// antigua por zips, y no debería descargar nada.
+#[tokio::test]
+#[ignore = "real: red y varios GB"]
+async fn e2e_manifest_install_and_update() {
+    use installer::sync::{self, SyncPlan};
+    let manifest_url = match std::env::var("KB_E2E_MANIFEST") {
+        Ok(url) => url,
+        Err(_) => {
+            let pack: Value = http::get_json("https://me.jonaykb.com/modpacks/terramity-awakened/latest.json").await.unwrap();
+            match pack["manifestUrl"].as_str() {
+                Some(url) => url.to_string(),
+                None => return println!("SKIP el modpack publicado todavía no tiene manifiesto"),
+            }
+        }
+    };
+    let manifest: Value = http::get_json(&manifest_url).await.unwrap();
+    let files = manifest["files"].as_array().unwrap().clone();
+    let instance = base_dir().join("instances").join("e2e-manifest");
+    std::fs::remove_dir_all(&instance).ok();
+    std::fs::create_dir_all(&instance).unwrap();
+
+    if let Ok(seed) = std::env::var("KB_E2E_SEED") {
+        let seed = PathBuf::from(seed);
+        std::fs::create_dir_all(instance.join("mods")).unwrap();
+        for entry in std::fs::read_dir(seed.join("mods")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "jar") {
+                continue;
+            }
+            std::fs::copy(&path, instance.join("mods").join(path.file_name().unwrap())).unwrap();
+        }
+        let status = std::process::Command::new("cp").arg("-r").arg(seed.join("overrides/.")).arg(&instance).status().unwrap();
+        assert!(status.success());
+    }
+
+    let plan = || SyncPlan { step: 1, steps: 2, check: (0, 5), download: (5, 95), apply: (95, 100) };
+    let check_all = |label: &str| {
+        for f in &files {
+            let path = instance.join(f["path"].as_str().unwrap());
+            let data = std::fs::read(&path).unwrap_or_else(|_| panic!("{}: falta {:?}", label, path));
+            let hash: String = sha2::Sha256::digest(&data).iter().map(|b| format!("{:02x}", b)).collect();
+            assert_eq!(hash, f["sha256"].as_str().unwrap(), "{}: {:?}", label, path);
+        }
+    };
+
+    let start = Instant::now();
+    sync::sync(&Reporter::none(), &instance, &manifest_url, None, None, plan()).await.unwrap_or_else(|e| panic!("{:#}", e));
+    check_all("instalación");
+    println!("OK   instalación por manifiesto: {} archivos en {:?}", files.len(), start.elapsed());
+
+    // Cambios de jugador: un mod menos, uno de más y una config editada
+    let mods: Vec<&str> = files.iter().filter_map(|f| f["path"].as_str()).filter(|p| p.starts_with("mods/")).collect();
+    std::fs::remove_file(instance.join(mods[0])).unwrap();
+    std::fs::write(instance.join("mods/sobrante.jar"), "x").unwrap();
+    let config = files.iter().filter_map(|f| f["path"].as_str()).find(|p| p.starts_with("config/")).unwrap();
+    std::fs::write(instance.join(config), "del jugador").unwrap();
+
+    let start = Instant::now();
+    sync::sync(&Reporter::none(), &instance, &manifest_url, None, None, plan()).await.unwrap_or_else(|e| panic!("{:#}", e));
+    assert!(!instance.join("mods/sobrante.jar").exists());
+    assert!(instance.join(mods[0]).exists());
+    assert_eq!(std::fs::read_to_string(instance.join(config)).unwrap(), "del jugador");
+    println!("OK   actualización: mod repuesto, sobrante borrado y config del jugador respetada en {:?}", start.elapsed());
+
+    let start = Instant::now();
+    sync::sync(&Reporter::none(), &instance, &manifest_url, None, None, plan()).await.unwrap_or_else(|e| panic!("{:#}", e));
+    println!("OK   sin cambios: {:?}", start.elapsed());
 }

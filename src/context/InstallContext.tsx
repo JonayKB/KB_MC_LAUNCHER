@@ -129,6 +129,8 @@ export function InstallProvider({ children }: Readonly<{ children: React.ReactNo
                     basePath,
                     overridesUrl: modpack.overridesUrl,
                     modsUrl: modpack.modsUrl,
+                    manifestUrl: modpack.manifestUrl,
+                    manifestSha256: modpack.manifestSha256,
                     modpackId: modpack.modpackId,
                     modpackVersion: modpack.version,
                 });
@@ -140,6 +142,8 @@ export function InstallProvider({ children }: Readonly<{ children: React.ReactNo
                     loaderVersion,
                     overridesUrl: modpack.overridesUrl,
                     modsUrl: modpack.modsUrl,
+                    manifestUrl: modpack.manifestUrl,
+                    manifestSha256: modpack.manifestSha256,
                     modpackId: modpack.modpackId,
                     modpackVersion: modpack.version,
                 });

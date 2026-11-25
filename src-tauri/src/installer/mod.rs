@@ -6,6 +6,7 @@ pub mod progress;
 pub mod requirements;
 pub mod rules;
 pub mod sysinfo;
+pub mod sync;
 
 use anyhow::{bail, Context, Result};
 use progress::emit;
@@ -17,6 +18,32 @@ use tauri::AppHandle;
 pub const INSTALLED_VERSION_FILE: &str = "installed_version";
 /// Se prepara aquí todo lo nuevo; la instancia no se toca hasta tenerlo completo
 pub const STAGING_DIR: &str = ".kb-staging";
+
+/// De dónde salen los archivos del modpack
+#[derive(Debug, Clone)]
+pub enum Content {
+    /// Formato nuevo: lista de archivos con hash; solo se descarga lo que cambia
+    Manifest { url: String, sha256: Option<String> },
+    /// Formato antiguo: dos zips que se descargan enteros
+    Zips { mods_url: String, overrides_url: String },
+}
+
+impl Content {
+    /// Con manifiesto se usa siempre; los zips quedan para los latest.json antiguos
+    pub fn from_urls(
+        manifest_url: Option<String>,
+        manifest_sha256: Option<String>,
+        mods_url: Option<String>,
+        overrides_url: Option<String>,
+    ) -> Result<Self> {
+        let present = |v: Option<String>| v.filter(|v| !v.trim().is_empty());
+        match (present(manifest_url), present(mods_url), present(overrides_url)) {
+            (Some(url), _, _) => Ok(Self::Manifest { url, sha256: present(manifest_sha256) }),
+            (None, Some(mods_url), Some(overrides_url)) => Ok(Self::Zips { mods_url, overrides_url }),
+            _ => bail!("El modpack no indica de dónde descargar sus archivos"),
+        }
+    }
+}
 
 /// Tramos de la barra (0-100) para las cuatro etapas de los archivos del modpack
 struct ContentPlan {
@@ -38,8 +65,7 @@ pub async fn install(
     mc_version: String,
     loader: String,
     loader_version: Option<String>,
-    overrides_url: String,
-    mods_url: String,
+    content: Content,
     modpack_id: String,
     modpack_version: Option<String>,
 ) -> Result<()> {
@@ -49,8 +75,7 @@ pub async fn install(
         &mc_version,
         &loader,
         loader_version,
-        &overrides_url,
-        &mods_url,
+        &content,
         &modpack_id,
         modpack_version.as_deref(),
     )
@@ -63,8 +88,7 @@ pub async fn install_with(
     mc_version: &str,
     loader: &str,
     loader_version: Option<String>,
-    overrides_url: &str,
-    mods_url: &str,
+    content: &Content,
     modpack_id: &str,
     modpack_version: Option<&str>,
 ) -> Result<()> {
@@ -101,8 +125,16 @@ pub async fn install_with(
         other => bail!("El loader '{}' no está soportado", other),
     }
 
-    let plan = ContentPlan { step: 2, steps: 3, bounds: [55, 85, 90, 97, 100] };
-    apply_content(&reporter, &instance_dir, mods_url, overrides_url, modpack_version, plan).await?;
+    match content {
+        Content::Manifest { url, sha256 } => {
+            let plan = sync::SyncPlan { step: 2, steps: 3, check: (55, 57), download: (57, 97), apply: (97, 100) };
+            sync::sync(&reporter, &instance_dir, url, sha256.as_deref(), modpack_version, plan).await?;
+        }
+        Content::Zips { mods_url, overrides_url } => {
+            let plan = ContentPlan { step: 2, steps: 3, bounds: [55, 85, 90, 97, 100] };
+            apply_content(&reporter, &instance_dir, mods_url, overrides_url, modpack_version, plan).await?;
+        }
+    }
 
     emit(
         &reporter,
@@ -117,16 +149,14 @@ pub async fn install_with(
 pub async fn update(
     app: AppHandle,
     base_path: String,
-    overrides_url: String,
-    mods_url: String,
+    content: Content,
     modpack_id: String,
     modpack_version: Option<String>,
 ) -> Result<()> {
     update_with(
         Reporter::new(app),
         Path::new(&base_path),
-        &overrides_url,
-        &mods_url,
+        &content,
         &modpack_id,
         modpack_version.as_deref(),
     )
@@ -136,8 +166,7 @@ pub async fn update(
 pub async fn update_with(
     reporter: Reporter,
     base: &Path,
-    overrides_url: &str,
-    mods_url: &str,
+    content: &Content,
     modpack_id: &str,
     modpack_version: Option<&str>,
 ) -> Result<()> {
@@ -148,8 +177,16 @@ pub async fn update_with(
         bail!("El modpack no está instalado");
     }
 
-    let plan = ContentPlan { step: 1, steps: 2, bounds: [0, 80, 88, 97, 100] };
-    apply_content(&reporter, &instance_dir, mods_url, overrides_url, modpack_version, plan).await?;
+    match content {
+        Content::Manifest { url, sha256 } => {
+            let plan = sync::SyncPlan { step: 1, steps: 2, check: (0, 5), download: (5, 95), apply: (95, 100) };
+            sync::sync(&reporter, &instance_dir, url, sha256.as_deref(), modpack_version, plan).await?;
+        }
+        Content::Zips { mods_url, overrides_url } => {
+            let plan = ContentPlan { step: 1, steps: 2, bounds: [0, 80, 88, 97, 100] };
+            apply_content(&reporter, &instance_dir, mods_url, overrides_url, modpack_version, plan).await?;
+        }
+    }
 
     emit(
         &reporter,
@@ -233,13 +270,15 @@ fn commit_content(instance_dir: &Path, version: &str) -> Result<()> {
     }
 
     move_tree(&staging.join("overrides"), instance_dir).context("No se pudieron aplicar los overrides")?;
+    // Lo que recordaba una instalación por manifiesto ya no corresponde a lo instalado
+    std::fs::remove_file(instance_dir.join(sync::STATE_FILE)).ok();
     std::fs::write(&version_file, version).context("No se pudo guardar la versión instalada")?;
     std::fs::remove_dir_all(&staging).ok();
     Ok(())
 }
 
 /// En Windows el antivirus o el indexador pueden retener un archivo unos instantes
-fn rename_with_retries(from: &Path, to: &Path) -> Result<()> {
+pub(crate) fn rename_with_retries(from: &Path, to: &Path) -> Result<()> {
     const ATTEMPTS: u32 = 8;
     for attempt in 1..=ATTEMPTS {
         match std::fs::rename(from, to) {
@@ -320,7 +359,8 @@ mod tests {
             zip_bytes(&[("config/a.toml", "v2"), ("config/sub/b.toml", "v2")]),
         ).await;
 
-        update_with(Reporter::none(), dir.path(), &format!("{url}/overrides.zip"), &format!("{url}/mods.zip"), "pack", Some("2.0")).await.unwrap();
+        let content = Content::Zips { mods_url: format!("{url}/mods.zip"), overrides_url: format!("{url}/overrides.zip") };
+        update_with(Reporter::none(), dir.path(), &content, "pack", Some("2.0")).await.unwrap();
 
         assert!(!instance.join("mods").join("viejo.jar").exists());
         assert_eq!(std::fs::read_to_string(instance.join("mods").join("nuevo.jar")).unwrap(), "v2");
@@ -343,7 +383,8 @@ mod tests {
             (format!("{url}/mods.zip"), format!("{url}/overrides.zip")),
             (format!("{url}/overrides.zip"), format!("{url}/mods.zip")),
         ] {
-            assert!(update_with(Reporter::none(), dir.path(), &overrides, &mods, "pack", Some("2.0")).await.is_err());
+            let content = Content::Zips { mods_url: mods, overrides_url: overrides };
+            assert!(update_with(Reporter::none(), dir.path(), &content, "pack", Some("2.0")).await.is_err());
             assert_eq!(std::fs::read_to_string(instance.join("mods").join("viejo.jar")).unwrap(), "v1");
             assert_eq!(std::fs::read_to_string(instance.join("config").join("a.toml")).unwrap(), "v1");
             assert_eq!(std::fs::read_to_string(instance.join(INSTALLED_VERSION_FILE)).unwrap(), "1.0");

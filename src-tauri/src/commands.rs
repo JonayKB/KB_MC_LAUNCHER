@@ -147,20 +147,23 @@ pub async fn install_modpack(
     mc_version: String,
     loader: String,
     loader_version: Option<String>,
-    overrides_url: String,
-    mods_url: String,
+    overrides_url: Option<String>,
+    mods_url: Option<String>,
+    manifest_url: Option<String>,
+    manifest_sha256: Option<String>,
     modpack_id: String,
     modpack_version: Option<String>,
 ) -> Result<(), String> {
     validate_modpack_id(&modpack_id)?;
+    let content = installer::Content::from_urls(manifest_url, manifest_sha256, mods_url, overrides_url)
+        .map_err(|e| e.to_string())?;
     let task = installer::install(
         app.clone(),
         base_path.clone(),
         mc_version,
         loader,
         loader_version,
-        overrides_url,
-        mods_url,
+        content,
         modpack_id.clone(),
         modpack_version,
     );
@@ -171,17 +174,20 @@ pub async fn install_modpack(
 pub async fn update_modpack(
     app: AppHandle,
     base_path: String,
-    overrides_url: String,
-    mods_url: String,
+    overrides_url: Option<String>,
+    mods_url: Option<String>,
+    manifest_url: Option<String>,
+    manifest_sha256: Option<String>,
     modpack_id: String,
     modpack_version: Option<String>,
 ) -> Result<(), String> {
     validate_modpack_id(&modpack_id)?;
+    let content = installer::Content::from_urls(manifest_url, manifest_sha256, mods_url, overrides_url)
+        .map_err(|e| e.to_string())?;
     let task = installer::update(
         app.clone(),
         base_path.clone(),
-        overrides_url,
-        mods_url,
+        content,
         modpack_id.clone(),
         modpack_version,
     );
