@@ -147,12 +147,13 @@ The manifest lists every file of the instance with its SHA-256 and size. Files a
   "syncDirs": ["mods"],
   "files": [
     { "path": "mods/example.jar", "sha256": "…", "size": 123456 },
-    { "path": "config/example.toml", "sha256": "…", "size": 789 }
+    { "path": "config/example-common.toml", "sha256": "…", "size": 789 },
+    { "path": "config/example-client.toml", "sha256": "…", "size": 456, "playerSetting": true }
   ]
 }
 ```
 
-On install or update the launcher compares the manifest with the instance (and with `.kb-installed.json`, what it installed last time), downloads only the missing or changed objects in parallel, checks each one's hash, and applies the changes with rollback if anything fails. Folders in `syncDirs` are kept identical to the list (extra files are removed). Other files are overrides: a file the player edited is kept unless the new version of the pack changes it, and a file the pack drops is removed only if the player did not edit it.
+On install or update the launcher compares the manifest with the instance (and with `.kb-installed.json`, what it installed last time), downloads only the missing or changed objects in parallel, checks each one's hash, and applies the changes with rollback if anything fails. Folders in `syncDirs` are kept identical to the list (extra files are removed). Other files are overrides and are always restored to the published version, even if the player or the game changed them. The exception is files marked `playerSetting` (client configs, options): a player's edit is kept until the pack publishes a new version of that file, and is not removed when the pack drops it.
 
 Older `latest.json` files with `modsUrl` / `overridesUrl` (two zips downloaded whole) are still supported; when `manifestUrl` is present it takes precedence.
 

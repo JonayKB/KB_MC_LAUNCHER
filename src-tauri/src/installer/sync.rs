@@ -47,6 +47,11 @@ pub struct ManifestFile {
     pub path: String,
     pub sha256: String,
     pub size: u64,
+    /// Ajuste del jugador (configs de cliente, opciones...): si lo cambia, se
+    /// respeta mientras el modpack no publique una versión nueva de ese archivo.
+    /// El resto de overrides se deja siempre como lo publica el modpack.
+    #[serde(default, rename = "playerSetting")]
+    pub player_setting: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -64,6 +69,9 @@ struct InstalledFile {
     /// lo cambió y se conservó su versión.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stamp: Option<(u64, u64)>,
+    /// Si es un ajuste del jugador (ver `ManifestFile::player_setting`)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    player_setting: bool,
 }
 
 /// Tramos de la barra para comprobar, descargar y aplicar
@@ -231,9 +239,12 @@ fn in_sync_dir(path: &str, sync_dirs: &[String]) -> bool {
 ///
 /// - Archivo igual al publicado: se deja.
 /// - En una carpeta sincronizada (mods): se sustituye y lo que no está en la lista se borra.
-/// - Override (config...): si el modpack no lo ha cambiado desde la última vez
-///   pero el jugador sí, se respeta el del jugador. Si el modpack lo cambió, manda el modpack.
-/// - Override que el modpack quita: se borra solo si el jugador no lo había tocado.
+/// - Ajuste del jugador (`playerSetting`): si el modpack no lo ha cambiado desde
+///   la última vez pero el jugador sí, se respeta el del jugador. Si el modpack
+///   lo cambió, manda el modpack.
+/// - Cualquier otro override (configs generales, kubejs...): siempre como lo
+///   publica el modpack, aunque lo haya cambiado el jugador o el propio juego.
+/// - Override que el modpack quita: se borra, salvo un ajuste que el jugador había cambiado.
 fn plan_changes(
     instance_dir: &Path,
     files: &[ManifestFile],
@@ -253,11 +264,16 @@ fn plan_changes(
             Ok(meta) if meta.is_file() => {
                 let local = local_hash(&target, &meta, previous_entry)?;
                 if local.eq_ignore_ascii_case(&file.sha256) {
-                    changes.kept.insert(file.path.clone(), InstalledFile { sha256: file.sha256.clone(), stamp: stamp_of(&meta) });
-                } else if !in_sync_dir(&file.path, sync_dirs)
+                    changes.kept.insert(file.path.clone(), InstalledFile {
+                        sha256: file.sha256.clone(),
+                        stamp: stamp_of(&meta),
+                        player_setting: file.player_setting,
+                    });
+                } else if file.player_setting
+                    && !in_sync_dir(&file.path, sync_dirs)
                     && previous_entry.is_some_and(|p| p.sha256.eq_ignore_ascii_case(&file.sha256))
                 {
-                    changes.kept.insert(file.path.clone(), InstalledFile { sha256: file.sha256.clone(), stamp: None });
+                    changes.kept.insert(file.path.clone(), InstalledFile { sha256: file.sha256.clone(), stamp: None, player_setting: true });
                 } else {
                     changes.writes.insert(file.path.clone(), file.sha256.to_lowercase());
                 }
@@ -297,7 +313,9 @@ fn plan_changes(
             }
             let target = instance_dir.join(path);
             if let Ok(meta) = std::fs::metadata(&target) {
-                if meta.is_file() && local_hash(&target, &meta, Some(entry))?.eq_ignore_ascii_case(&entry.sha256) {
+                let edited_setting = entry.player_setting
+                    && !local_hash(&target, &meta, Some(entry))?.eq_ignore_ascii_case(&entry.sha256);
+                if meta.is_file() && !edited_setting {
                     changes.deletes.push(path.clone());
                 }
             }
@@ -616,7 +634,11 @@ fn apply_changes(instance_dir: &Path, files: &[ManifestFile], changes: Changes, 
     for file in files {
         if changes.writes.contains_key(&file.path) {
             let stamp = std::fs::metadata(instance_dir.join(&file.path)).ok().and_then(|m| stamp_of(&m));
-            state.files.insert(file.path.clone(), InstalledFile { sha256: file.sha256.to_lowercase(), stamp });
+            state.files.insert(file.path.clone(), InstalledFile {
+                sha256: file.sha256.to_lowercase(),
+                stamp,
+                player_setting: file.player_setting,
+            });
         }
     }
     let json = serde_json::to_string(&state)?;
@@ -690,7 +712,9 @@ mod tests {
             for (path, data) in files {
                 let hash = sha(data);
                 served.insert(format!("objects/{}/{}", &hash[..2], hash), data.to_vec());
-                list.push(serde_json::json!({ "path": path, "sha256": hash, "size": data.len() }));
+                list.push(serde_json::json!({
+                    "path": path, "sha256": hash, "size": data.len(), "playerSetting": path.contains("client"),
+                }));
             }
             let manifest = serde_json::json!({
                 "formatVersion": 1, "version": version, "objectsUrl": "objects/",
@@ -770,29 +794,61 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn respects_player_edits_unless_the_pack_changes_the_file() {
+    async fn shared_overrides_follow_the_pack_and_player_settings_are_kept() {
         let dir = tempfile::tempdir().unwrap();
         let instance = dir.path();
         let server = Server::start().await;
-
-        let v1 = server.publish("1.0", &[("config/client.toml", b"pack1"), ("config/old.toml", b"old"), ("mods/a.jar", b"a")]);
+        // En el servidor de pruebas, lo que lleva "client" en la ruta es un ajuste del jugador
+        let v1 = server.publish("1.0", &[
+            ("config/mod-common.toml", b"comun1"),
+            ("config/mod-client.toml", b"cliente1"),
+            ("config/retirado-client.toml", b"r"),
+            ("config/retirado-common.toml", b"r"),
+            ("kubejs/script.js", b"js1"),
+        ]);
         run(instance, &v1, "1.0").await.unwrap();
-        std::fs::write(instance.join("config/client.toml"), "mio").unwrap();
-        std::fs::write(instance.join("config/old.toml"), "mio tambien").unwrap();
-        std::fs::write(instance.join("mods/a.jar"), "roto").unwrap();
 
-        // El modpack no toca client.toml y quita old.toml: se respetan los del jugador.
-        // Un mod alterado se restaura siempre.
-        let v2 = server.publish("2.0", &[("config/client.toml", b"pack1"), ("mods/a.jar", b"a")]);
+        // Caso 1: tú cambias un override y el jugador no ha tocado nada -> le llega el nuevo
+        let v2 = server.publish("2.0", &[
+            ("config/mod-common.toml", b"comun2"),
+            ("config/mod-client.toml", b"cliente1"),
+            ("config/retirado-client.toml", b"r"),
+            ("config/retirado-common.toml", b"r"),
+            ("kubejs/script.js", b"js1"),
+        ]);
         run(instance, &v2, "2.0").await.unwrap();
-        assert_eq!(read(instance, "config/client.toml"), "mio");
-        assert_eq!(read(instance, "config/old.toml"), "mio tambien");
-        assert_eq!(read(instance, "mods/a.jar"), "a");
+        assert_eq!(read(instance, "config/mod-common.toml"), "comun2");
 
-        // El modpack cambia client.toml: gana el modpack
-        let v3 = server.publish("3.0", &[("config/client.toml", b"pack3"), ("mods/a.jar", b"a")]);
+        // El juego (o el jugador) cambia archivos generales y un ajuste suyo
+        std::fs::write(instance.join("config/mod-common.toml"), "reescrito por el mod").unwrap();
+        std::fs::write(instance.join("kubejs/script.js"), "tocado").unwrap();
+        std::fs::write(instance.join("config/mod-client.toml"), "mis ajustes").unwrap();
+        std::fs::write(instance.join("config/retirado-client.toml"), "mios").unwrap();
+        std::fs::write(instance.join("config/retirado-common.toml"), "tocado").unwrap();
+
+        // Caso 2: tú no cambias esos archivos y retiras dos
+        //  - generales: vuelven a ser los del servidor; el retirado se borra
+        //  - ajustes del jugador: se respetan, también el retirado
+        let v3 = server.publish("3.0", &[
+            ("config/mod-common.toml", b"comun2"),
+            ("config/mod-client.toml", b"cliente1"),
+            ("kubejs/script.js", b"js1"),
+        ]);
         run(instance, &v3, "3.0").await.unwrap();
-        assert_eq!(read(instance, "config/client.toml"), "pack3");
+        assert_eq!(read(instance, "config/mod-common.toml"), "comun2");
+        assert_eq!(read(instance, "kubejs/script.js"), "js1");
+        assert!(!instance.join("config/retirado-common.toml").exists());
+        assert_eq!(read(instance, "config/mod-client.toml"), "mis ajustes");
+        assert_eq!(read(instance, "config/retirado-client.toml"), "mios");
+
+        // Caso 3: tú cambias un ajuste de cliente que el jugador había editado -> gana el servidor
+        let v4 = server.publish("4.0", &[
+            ("config/mod-common.toml", b"comun2"),
+            ("config/mod-client.toml", b"cliente4"),
+            ("kubejs/script.js", b"js1"),
+        ]);
+        run(instance, &v4, "4.0").await.unwrap();
+        assert_eq!(read(instance, "config/mod-client.toml"), "cliente4");
     }
 
     #[tokio::test]

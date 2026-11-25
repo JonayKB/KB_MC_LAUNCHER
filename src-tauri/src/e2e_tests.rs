@@ -393,15 +393,27 @@ async fn e2e_manifest_install_and_update() {
     let mods: Vec<&str> = files.iter().filter_map(|f| f["path"].as_str()).filter(|p| p.starts_with("mods/")).collect();
     std::fs::remove_file(instance.join(mods[0])).unwrap();
     std::fs::write(instance.join("mods/sobrante.jar"), "x").unwrap();
-    let config = files.iter().filter_map(|f| f["path"].as_str()).find(|p| p.starts_with("config/")).unwrap();
-    std::fs::write(instance.join(config), "del jugador").unwrap();
+    let general = files.iter().find(|f| f["path"].as_str().unwrap().starts_with("config/") && f["playerSetting"] != true).unwrap();
+    let general = general["path"].as_str().unwrap();
+    std::fs::write(instance.join(general), "cambiado por el juego").unwrap();
+    let setting = files.iter().find(|f| f["playerSetting"] == true).and_then(|f| f["path"].as_str());
+    if let Some(setting) = setting {
+        std::fs::write(instance.join(setting), "del jugador").unwrap();
+    }
 
     let start = Instant::now();
     sync::sync(&Reporter::none(), &instance, &manifest_url, None, None, plan()).await.unwrap_or_else(|e| panic!("{:#}", e));
     assert!(!instance.join("mods/sobrante.jar").exists());
     assert!(instance.join(mods[0]).exists());
-    assert_eq!(std::fs::read_to_string(instance.join(config)).unwrap(), "del jugador");
-    println!("OK   actualización: mod repuesto, sobrante borrado y config del jugador respetada en {:?}", start.elapsed());
+    assert_ne!(std::fs::read_to_string(instance.join(general)).unwrap(), "cambiado por el juego");
+    if let Some(setting) = setting {
+        assert_eq!(std::fs::read_to_string(instance.join(setting)).unwrap(), "del jugador");
+    }
+    println!(
+        "OK   actualización en {:?}: mod repuesto, sobrante borrado, config general restaurada{}",
+        start.elapsed(),
+        if setting.is_some() { " y ajuste del jugador respetado" } else { " (el manifiesto no marca ajustes del jugador)" }
+    );
 
     let start = Instant::now();
     sync::sync(&Reporter::none(), &instance, &manifest_url, None, None, plan()).await.unwrap_or_else(|e| panic!("{:#}", e));
