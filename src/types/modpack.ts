@@ -38,8 +38,17 @@ export interface ModpackVersion {
     /** @deprecated usar loaderVersion; se mantiene para los latest.json antiguos */
     forgeVersion?: string;
     minecraftVersion: string;    // "1.20.1"
-    modsUrl: string;             // URL a carpeta/zip de mods
-    overridesUrl: string;        // URL a carpeta/zip de overrides
+    /**
+     * Lista de archivos con su SHA-256 (formato nuevo). Con ella el launcher solo
+     * descarga lo que cambia y comprueba cada archivo; tiene prioridad sobre los zips.
+     */
+    manifestUrl?: string;
+    /** SHA-256 del manifiesto, para no aceptar uno a medio subir o de otra versión */
+    manifestSha256?: string;
+    /** Formato antiguo: zip con los mods */
+    modsUrl?: string;
+    /** Formato antiguo: zip con los overrides */
+    overridesUrl?: string;
     changelog?: string;
     images?: string[]
 }

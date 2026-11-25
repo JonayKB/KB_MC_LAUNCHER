@@ -129,12 +129,32 @@ Each modpack publishes a `latest.json` at `https://me.jonaykb.com/modpacks/<id>/
   "minecraftVersion": "1.20.1",
   "loader": "fabric",
   "loaderVersion": "0.16.10",
-  "modsUrl": "https://.../mods.zip",
-  "overridesUrl": "https://.../overrides.zip",
+  "manifestUrl": "https://.../manifest-1.2.0.json",
+  "manifestSha256": "<sha256 of the manifest file>",
   "changelog": "Optional text shown on the home screen",
   "images": ["https://.../screenshot.png"]
 }
 ```
+
+The manifest lists every file of the instance with its SHA-256 and size. Files are served loose and content-addressed at `<objectsUrl>/<first 2 hex chars>/<sha256>` (relative to the manifest), so a file that does not change is never downloaded again:
+
+```json
+{
+  "formatVersion": 1,
+  "modpackId": "mypack",
+  "version": "1.2.0",
+  "objectsUrl": "objects/",
+  "syncDirs": ["mods"],
+  "files": [
+    { "path": "mods/example.jar", "sha256": "…", "size": 123456 },
+    { "path": "config/example.toml", "sha256": "…", "size": 789 }
+  ]
+}
+```
+
+On install or update the launcher compares the manifest with the instance (and with `.kb-installed.json`, what it installed last time), downloads only the missing or changed objects in parallel, checks each one's hash, and applies the changes with rollback if anything fails. Folders in `syncDirs` are kept identical to the list (extra files are removed). Other files are overrides: a file the player edited is kept unless the new version of the pack changes it, and a file the pack drops is removed only if the player did not edit it.
+
+Older `latest.json` files with `modsUrl` / `overridesUrl` (two zips downloaded whole) are still supported; when `manifestUrl` is present it takes precedence.
 
 The modpack list lives in `index.json`. An entry can set `release_date` (ISO 8601 with time and zone) to announce a modpack before it can be downloaded: until then its icon is shown greyed out with the release date and a countdown, and installing is disabled. Entries without `release_date` are available right away.
 

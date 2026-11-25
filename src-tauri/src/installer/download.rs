@@ -57,7 +57,7 @@ pub async fn download_to(
 }
 
 /// Un error definitivo del servidor (404, 403...): reintentar no lo arregla
-fn is_permanent(err: &anyhow::Error) -> bool {
+pub(crate) fn is_permanent(err: &anyhow::Error) -> bool {
     err.chain()
         .filter_map(|e| e.downcast_ref::<reqwest::Error>())
         .filter_map(|e| e.status())
